@@ -1,0 +1,45 @@
+{
+  "project_name": "inland_empire_pilot",
+  "workspace": "./runs/inland_empire_pilot",
+  "aoi": {
+    "name": "inland_empire_ca",
+    "bbox": [-118.05, 33.65, -116.85, 34.25],
+    "crs": "EPSG:4326"
+  },
+  "epochs": [
+    {
+      "name": "2018",
+      "start_date": "2018-01-01",
+      "end_date": "2018-12-31",
+      "imagery_uri": "s3://example-imagery/inland-empire/2018/"
+    },
+    {
+      "name": "2024",
+      "start_date": "2024-01-01",
+      "end_date": "2024-12-31",
+      "imagery_uri": "s3://example-imagery/inland-empire/2024/"
+    }
+  ],
+  "road_mask": {
+    "road_classes": ["motorway", "trunk", "primary", "secondary"],
+    "buffer_meters": 2000,
+    "include_rail": true,
+    "include_ports": false
+  },
+  "tiling": {
+    "tile_size_px": 1024,
+    "stride_px": 768,
+    "resolution_meters": 0.5
+  },
+  "detector": {
+    "type": "yolo",
+    "task": "segment",
+    "checkpoint": null,
+    "confidence_threshold": 0.25
+  },
+  "classifier": {
+    "enabled": true,
+    "checkpoint": null,
+    "threshold": 0.5
+  }
+}

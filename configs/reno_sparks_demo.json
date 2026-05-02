@@ -1,0 +1,46 @@
+{
+  "project_name": "reno_sparks_demo",
+  "workspace": "./runs/reno_sparks_demo",
+  "aoi": {
+    "name": "reno_sparks_nv",
+    "bbox": [-120.05, 39.40, -119.45, 39.70],
+    "comment": "Reno-Sparks metro, NV — I-80 warehouse corridor + South Meadows logistics park",
+    "crs": "EPSG:4326"
+  },
+  "epochs": [
+    {
+      "name": "2019",
+      "start_date": "2019-01-01",
+      "end_date": "2019-12-31",
+      "imagery_uri": "stac://earth-search.aws.element84.com/v1/naip"
+    },
+    {
+      "name": "2022",
+      "start_date": "2022-01-01",
+      "end_date": "2022-12-31",
+      "imagery_uri": "stac://earth-search.aws.element84.com/v1/naip"
+    }
+  ],
+  "road_mask": {
+    "road_classes": ["motorway", "trunk", "primary", "secondary"],
+    "buffer_meters": 2000,
+    "include_rail": true,
+    "include_ports": false
+  },
+  "tiling": {
+    "tile_size_px": 1024,
+    "stride_px": 768,
+    "resolution_meters": 1.0
+  },
+  "detector": {
+    "type": "yolo",
+    "task": "segment",
+    "checkpoint": null,
+    "confidence_threshold": 0.25
+  },
+  "classifier": {
+    "enabled": true,
+    "checkpoint": null,
+    "threshold": 0.5
+  }
+}
