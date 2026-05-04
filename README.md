@@ -20,18 +20,21 @@ provider-specific implementations.
 
 ## Quick Start
 
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if you don't have it, then:
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev,geo]"
-pytest
+uv sync --extra dev --extra geo
+uv run pytest
 ```
+
+`uv sync` creates a virtual environment and installs all dependencies automatically.
+Commit the generated `uv.lock` to the repo for reproducible installs.
 
 Copy `configs/example.json` to a new experiment config and edit the AOI,
 imagery epochs, road-mask distance, and model checkpoint paths.
 
 ```bash
-warehouse-growth plan configs/example.json
+uv run warehouse-growth plan configs/example.json
 ```
 
 ## Repository Layout

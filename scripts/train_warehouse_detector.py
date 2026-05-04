@@ -58,7 +58,7 @@ def main() -> None:
         from ultralytics import YOLO
     except ImportError:
         print("ERROR: ultralytics is not installed.")
-        print("Install it with:  pip install -e '.[models]'  or  pip install ultralytics")
+        print("Install it with:  uv sync --extra models  or  uv pip install ultralytics")
         sys.exit(1)
 
     output_dir = workspace / "training" / "runs"

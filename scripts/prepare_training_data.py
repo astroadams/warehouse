@@ -127,7 +127,7 @@ def main(workspace: Path) -> None:
     except ImportError as e:
         raise ImportError(
             "rasterio, numpy, and affine are required — "
-            "install via conda or pip install rasterio numpy affine"
+            "install via: uv sync --extra geo"
         ) from e
 
     stats = {"train": {"pos": 0, "neg": 0}, "val": {"pos": 0, "neg": 0}}
