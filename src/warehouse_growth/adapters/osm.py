@@ -9,7 +9,7 @@ from warehouse_growth.data_sources import VectorFeature
 # private.coffee is a reliable no-rate-limit alternative.
 # Other options: https://overpass.osm.ch/api/interpreter (Swiss instance)
 _OVERPASS_URL = "https://overpass.private.coffee/api/interpreter"
-_DEFAULT_TIMEOUT = 90
+_DEFAULT_TIMEOUT = 180
 
 # Overpass enforces stricter header checks to deter automated abuse.
 # A descriptive User-Agent and explicit Accept avoid 406 rejections.
@@ -75,14 +75,21 @@ class OverpassTagSource:
             bbox = f"{tmy},{tmx},{tmyy},{tmxx}"
             query = _QUERY_TEMPLATE.format(timeout=self.timeout, bbox=bbox)
 
+            response = None
             for attempt in range(4):
                 if attempt:
                     wait = 2 ** attempt
                     tqdm.write(f"  retry {attempt} after {wait}s …")
                     time.sleep(wait)
-                response = requests.post(
-                    self.url, data={"data": query}, headers=_REQUEST_HEADERS, timeout=self.timeout
-                )
+                try:
+                    response = requests.post(
+                        self.url, data={"data": query}, headers=_REQUEST_HEADERS, timeout=self.timeout
+                    )
+                except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as exc:
+                    if attempt == 3:
+                        raise
+                    tqdm.write(f"  {type(exc).__name__} on attempt {attempt + 1}, will retry")
+                    continue
                 if response.status_code not in _transient:
                     break
             response.raise_for_status()
