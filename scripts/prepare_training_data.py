@@ -30,6 +30,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import geopandas as gpd
+import planetary_computer as pc
 import yaml
 from shapely.geometry import box
 from shapely.strtree import STRtree
@@ -47,11 +48,7 @@ def _fresh_uri(uri: str) -> str:
     each download means a script paused overnight won't 403 on resume.
     """
     base = urlparse(uri)._replace(query="", fragment="").geturl()
-    try:
-        import planetary_computer as pc
-        return pc.sign(base)
-    except ImportError:
-        return base
+    return pc.sign(base)
 
 RENO_AOI = box(-120.05, 39.40, -119.45, 39.70)
 EPOCH = "2022"
@@ -118,17 +115,11 @@ def main(workspace: Path) -> None:
         (dataset_dir / "labels" / split).mkdir(parents=True, exist_ok=True)
 
     # ── Import heavy dependencies lazily ──────────────────────────────────
-    try:
-        import numpy as np
-        import rasterio
-        from affine import Affine
-        from rasterio.transform import array_bounds
-        from rasterio.warp import transform_bounds
-    except ImportError as e:
-        raise ImportError(
-            "rasterio, numpy, and affine are required — "
-            "install via: uv sync --extra geo"
-        ) from e
+    import numpy as np
+    import rasterio
+    from affine import Affine
+    from rasterio.transform import array_bounds
+    from rasterio.warp import transform_bounds
 
     stats = {"train": {"pos": 0, "neg": 0}, "val": {"pos": 0, "neg": 0}}
 
@@ -190,12 +181,16 @@ def main(workspace: Path) -> None:
                     instances.append((WAREHOUSE_CLASS_ID, pts))
 
             is_positive = bool(instances)
-            if not is_positive and random.random() > NEG_SAMPLE_RATE:
-                continue
-
             patch_name = f"{tile_name}_{win.x}_{win.y}"
             img_path = dataset_dir / "images" / split / f"{patch_name}.tif"
             lbl_path = dataset_dir / "labels" / split / f"{patch_name}.txt"
+
+            # For new patches, apply sampling to decide whether to include them.
+            # For patches whose image already exists, always refresh the label so
+            # re-runs with updated annotation logic don't leave stale files.
+            if not img_path.exists():
+                if not is_positive and random.random() > NEG_SAMPLE_RATE:
+                    continue
 
             if not img_path.exists():
                 patch_img = img_full[:, win.y:win.y + win.height, win.x:win.x + win.width]

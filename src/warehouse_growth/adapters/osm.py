@@ -3,6 +3,10 @@ from __future__ import annotations
 import time
 from typing import Any, Iterable
 
+import requests
+from shapely.geometry import Polygon, box
+from tqdm import tqdm
+
 from warehouse_growth.data_sources import VectorFeature
 
 # overpass-api.de has been blocking cloud-provider IP ranges since April 2026.
@@ -49,13 +53,6 @@ class OverpassTagSource:
         tiles). Increase it if you get 406 errors on a large AOI; each tile must fit
         within Overpass's single-query area limit (~0.25 deg² works reliably).
         """
-        try:
-            import requests
-            from shapely.geometry import Polygon, box
-            from tqdm import tqdm
-        except ImportError as e:
-            raise ImportError("Install geo extras: pip install warehouse-growth[geo]") from e
-
         minx, miny, maxx, maxy = aoi.bounds
         x_step = (maxx - minx) / grid
         y_step = (maxy - miny) / grid

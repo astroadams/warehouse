@@ -6,6 +6,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
+import yaml
+
 
 @dataclass(frozen=True)
 class AoiConfig:
@@ -68,10 +70,6 @@ def load_config(path: str | Path) -> ProjectConfig:
     config_path = Path(path)
     with config_path.open("r", encoding="utf-8") as stream:
         if config_path.suffix.lower() in {".yaml", ".yml"}:
-            try:
-                import yaml
-            except ImportError as exc:
-                raise RuntimeError("YAML configs require the geo extra or PyYAML installed.") from exc
             raw = yaml.safe_load(stream)
         else:
             raw = json.load(stream)

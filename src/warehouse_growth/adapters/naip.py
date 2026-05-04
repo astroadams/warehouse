@@ -3,6 +3,9 @@ from __future__ import annotations
 import time
 from typing import Any, Iterable
 
+import planetary_computer as pc
+from tqdm import tqdm
+
 from warehouse_growth.data_sources import ImageryAsset
 
 # Microsoft Planetary Computer hosts NAIP as COGs on Azure Blob Storage.
@@ -28,12 +31,8 @@ def _parse_crs(properties: dict) -> str | None:
 
 
 def _sign_href(href: str) -> str:
-    """Return a SAS-token-signed URL. Falls back to the original on ImportError."""
-    try:
-        import planetary_computer as pc
-        return pc.sign(href)
-    except ImportError:
-        return href
+    """Return a SAS-token-signed URL for Microsoft Planetary Computer assets."""
+    return pc.sign(href)
 
 
 def _post_with_retry(url: str, payload: dict) -> dict:
@@ -75,11 +74,6 @@ class NAIPImagerySource:
         self.stac_url = stac_url
 
     def assets_for_aoi(self, aoi: Any, epoch: str) -> Iterable[ImageryAsset]:
-        try:
-            from tqdm import tqdm
-        except ImportError as e:
-            raise ImportError("Install geo extras: pip install warehouse-growth[geo]") from e
-
         # Serialize AOI geometry to GeoJSON for the POST body.
         try:
             geojson_geom = aoi.__geo_interface__

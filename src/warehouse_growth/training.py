@@ -4,6 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import rasterio
+from rasterio.warp import transform as warp_transform
+from shapely.geometry import Polygon
+
 
 def geo_polygon_to_yolo(
     polygon: Any,
@@ -23,12 +27,6 @@ def geo_polygon_to_yolo(
     The polygon is first reprojected from `src_crs` to the tile CRS, then the
     rasterio inverse Affine transform maps geographic coords → pixel coords.
     """
-    try:
-        from rasterio.warp import transform as warp_transform
-        from shapely.geometry import Polygon
-    except ImportError as e:
-        raise ImportError("Install geo extras: pip install warehouse-growth[geo]") from e
-
     if str(tile_crs) != src_crs:
         xs, ys = zip(*list(polygon.exterior.coords))
         xt, yt = warp_transform(src_crs, str(tile_crs), list(xs), list(ys))
@@ -70,11 +68,6 @@ def download_naip_tile(uri: str, output_path: Path) -> Path:
     - s3://     AWS S3 with anonymous access (legacy; requester-pays buckets
                 will fail with a 403 — use Planetary Computer instead).
     """
-    try:
-        import rasterio
-    except ImportError as e:
-        raise ImportError("rasterio is required — install via conda or pip install rasterio") from e
-
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
