@@ -11,7 +11,7 @@ Usage
 Arguments
 ---------
     workspace_dir   Path to the run workspace (default: ./runs/reno_sparks_demo)
-    --epochs N      Number of training epochs (default: 50)
+    --epochs N      Number of training epochs (default: 150)
     --model MODEL   Pretrained YOLO checkpoint to fine-tune from
                     (default: yolov8n-seg.pt — downloads automatically on first run)
     --resume        Resume from the last saved checkpoint in the output directory
@@ -31,7 +31,7 @@ from pathlib import Path
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train a YOLO warehouse segmentation model.")
     p.add_argument("workspace", nargs="?", default="runs/reno_sparks_demo")
-    p.add_argument("--epochs", type=int, default=50)
+    p.add_argument("--epochs", type=int, default=150)
     p.add_argument("--model", default="yolov8n-seg.pt",
                    help="Pretrained YOLO checkpoint (any ultralytics seg model)")
     p.add_argument("--imgsz", type=int, default=1024,
@@ -70,7 +70,7 @@ def main() -> None:
         print("Install it with:  uv sync --extra models  or  uv pip install ultralytics")
         sys.exit(1)
 
-    output_dir = workspace / "training" / "runs"
+    output_dir = workspace.resolve() / "training" / "runs"
     last_pt = output_dir / "warehouse_seg" / "weights" / "last.pt"
 
     if args.resume:
