@@ -14,6 +14,7 @@ Arguments
     --epochs N      Number of training epochs (default: 50)
     --model MODEL   Pretrained YOLO checkpoint to fine-tune from
                     (default: yolov8n-seg.pt — downloads automatically on first run)
+    --resume        Resume from the last saved checkpoint in the output directory
 
 Outputs
 -------
@@ -40,6 +41,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", default=None,
                    help="Training device: 0 (GPU), cpu, mps (Apple Silicon). "
                         "Auto-detected when omitted.")
+    p.add_argument("--resume", action="store_true",
+                   help="Resume training from the last checkpoint in the output directory.")
     return p.parse_args()
 
 
@@ -54,6 +57,12 @@ def main() -> None:
         print("  python scripts/prepare_training_data.py")
         sys.exit(1)
 
+    import os
+    # GeoTIFF files contain proprietary tags that libtiff doesn't recognise;
+    # OpenCV surfaces these as WARNING-level noise. Raise the threshold to ERROR
+    # so they're suppressed without hiding real problems.
+    os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
+
     try:
         from ultralytics import YOLO
     except ImportError:
@@ -62,16 +71,24 @@ def main() -> None:
         sys.exit(1)
 
     output_dir = workspace / "training" / "runs"
+    last_pt = output_dir / "warehouse_seg" / "weights" / "last.pt"
 
-    print(f"Dataset  : {dataset_yaml}")
-    print(f"Base model: {args.model}")
+    if args.resume:
+        if not last_pt.exists():
+            print(f"ERROR: --resume requested but no checkpoint found at {last_pt}")
+            sys.exit(1)
+        print(f"Resuming from {last_pt}")
+        model = YOLO(str(last_pt))
+    else:
+        print(f"Dataset  : {dataset_yaml}")
+        print(f"Base model: {args.model}")
+        model = YOLO(args.model)
+
     print(f"Epochs   : {args.epochs}")
     print(f"Img size : {args.imgsz}")
     print(f"Batch    : {args.batch}")
     print(f"Output   : {output_dir / 'warehouse_seg'}")
     print()
-
-    model = YOLO(args.model)
 
     train_kwargs: dict = dict(
         data=str(dataset_yaml),
@@ -81,6 +98,7 @@ def main() -> None:
         project=str(output_dir),
         name="warehouse_seg",
         exist_ok=True,
+        resume=args.resume,
         # Augmentation — helps with the class-imbalance in aerial imagery.
         hsv_h=0.015,
         hsv_s=0.3,
