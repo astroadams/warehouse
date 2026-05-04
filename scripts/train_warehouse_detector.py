@@ -58,10 +58,11 @@ def main() -> None:
         sys.exit(1)
 
     import os
-    # GeoTIFF files contain proprietary tags that libtiff doesn't recognise;
-    # OpenCV surfaces these as WARNING-level noise. Raise the threshold to ERROR
-    # so they're suppressed without hiding real problems.
     os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
+    # Store MLflow runs inside the workspace so each AOI keeps its own history.
+    # MLFLOW_EXPERIMENT_NAME groups all runs for this workspace together.
+    os.environ.setdefault("MLFLOW_TRACKING_URI", str(workspace.resolve() / "mlruns"))
+    os.environ.setdefault("MLFLOW_EXPERIMENT_NAME", workspace.resolve().name)
 
     try:
         from ultralytics import YOLO
