@@ -59,7 +59,7 @@ WAREHOUSE_CLASS_ID = 0
 TRAIN_FRAC = 0.8
 PATCH_SIZE = 1024
 STRIDE = 768
-NEG_SAMPLE_RATE = 0.05   # fraction of empty patches to keep as hard negatives
+NEG_SAMPLE_RATE = 0.20   # fraction of non-warehouse patches to keep as hard negatives
 SEED = 42
 
 random.seed(SEED)
@@ -174,15 +174,13 @@ def main(workspace: Path) -> None:
 
             instances: list[tuple[int, list[float]]] = []
             for idx in hit_idxs.tolist():
-                clipped = warehouse_geoms[idx].intersection(patch_box_4326)
-                if clipped.is_empty:
+                geom = warehouse_geoms[idx]
+                if geom.geom_type != "Polygon":
                     continue
-                if clipped.geom_type == "MultiPolygon":
-                    clipped = max(clipped.geoms, key=lambda p: p.area)
-                if clipped.geom_type != "Polygon":
+                if not patch_box_4326.contains(geom):
                     continue
                 pts = geo_polygon_to_yolo(
-                    clipped,
+                    geom,
                     patch_transform,
                     str(tile_crs),
                     win.width,
