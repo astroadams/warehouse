@@ -91,6 +91,19 @@ uv run python scripts/train_warehouse_detector.py --resume
 
 The best checkpoint is saved to `<workspace>/training/runs/warehouse_seg/weights/best.pt`.
 
+### 5. Plot loss curves
+
+After training starts, generate a training vs validation loss plot to check for overfitting:
+
+```bash
+uv run python scripts/plot_loss_curves.py                        # default workspace
+uv run python scripts/plot_loss_curves.py runs/other_aoi         # different workspace
+uv run python scripts/plot_loss_curves.py path/to/results.csv    # direct CSV path
+```
+
+The plot is saved as `loss_curves.png` alongside `results.csv` in the run directory.
+Re-run it at any point during training to see the latest epochs.
+
 ### Experiment tracking
 
 MLflow is enabled automatically when the `models` extra is installed. After
@@ -111,6 +124,7 @@ scripts/                        End-to-end pipeline scripts
   label_prototype_data.py       Assign warehouse labels via OSM spatial join
   prepare_training_data.py      Slice NAIP tiles into YOLO-format patches
   train_warehouse_detector.py   Fine-tune YOLOv8 segmentation model
+  plot_loss_curves.py           Plot training vs validation losses from results.csv
 src/warehouse_growth/           Python package
   cli.py                        Command-line entry points
   config.py                     Config loading and validation
