@@ -79,7 +79,7 @@ Key options:
 | `--epochs N` | 150 | Training epochs |
 | `--model MODEL` | `yolov8n-seg.pt` | Base checkpoint (downloaded automatically) |
 | `--imgsz N` | 1024 | Input image size in pixels |
-| `--batch N` | 8 | Batch size — reduce if GPU OOM |
+| `--batch N` | 8 | Batch size - reduce if GPU OOM |
 | `--device DEVICE` | auto | `0` for GPU, `cpu`, `mps` for Apple Silicon |
 | `--resume` | off | Resume from last saved checkpoint |
 
@@ -97,7 +97,7 @@ MLflow is enabled automatically when the `models` extra is installed. After
 training, launch the UI to compare runs:
 
 ```bash
-mlflow ui --backend-store-uri runs/reno_sparks_demo/mlruns
+mlflow ui --backend-store-uri sqlite:///runs/reno_sparks_demo/mlruns.db
 ```
 
 ## Repository Layout
