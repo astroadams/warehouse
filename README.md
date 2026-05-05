@@ -110,7 +110,7 @@ MLflow is enabled automatically when the `models` extra is installed. After
 training, launch the UI to compare runs:
 
 ```bash
-mlflow ui --backend-store-uri sqlite:///runs/reno_sparks_demo/mlruns.db
+uv run mlflow ui --backend-store-uri sqlite:///runs/reno_sparks_demo/mlruns.db
 ```
 
 ## Repository Layout
