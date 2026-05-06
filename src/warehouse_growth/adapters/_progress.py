@@ -3,6 +3,8 @@ from __future__ import annotations
 import threading
 from typing import Callable, TypeVar
 
+from tqdm import tqdm
+
 T = TypeVar("T")
 
 
@@ -12,15 +14,7 @@ def run_with_spinner(desc: str, fn: Callable[[], T]) -> T:
     The DuckDB S3 scan and Overpass HTTP request are both fully opaque blocking
     calls — there's no progress callback. This runs them in a daemon thread and
     refreshes a tqdm bar every 250ms so the terminal doesn't appear frozen.
-
-    Falls back to a plain print if tqdm is not installed.
     """
-    try:
-        from tqdm import tqdm
-    except ImportError:
-        print(f"{desc} …", flush=True)
-        return fn()
-
     result: list[T] = []
     exc: list[BaseException | None] = [None]
     done = threading.Event()

@@ -5,6 +5,10 @@ from pathlib import Path
 from typing import Any, Iterable
 from xml.etree import ElementTree
 
+import duckdb
+import geopandas as gpd
+from shapely import from_wkb
+
 from warehouse_growth.adapters._progress import run_with_spinner
 from warehouse_growth.data_sources import VectorFeature
 
@@ -51,11 +55,6 @@ class MicrosoftFootprintSource:
         self.path = Path(path)
 
     def footprints_for_aoi(self, aoi: Any) -> Iterable[VectorFeature]:
-        try:
-            import geopandas as gpd
-        except ImportError as e:
-            raise ImportError("Install geo extras: pip install warehouse-growth[geo]") from e
-
         gdf = gpd.read_parquet(self.path)
         gdf = gdf[gdf.intersects(aoi)]
 
@@ -80,13 +79,6 @@ class MicrosoftFootprintSource:
         When `overture_release` is None the latest available release is discovered
         automatically by listing the S3 bucket.
         """
-        try:
-            import duckdb
-            import geopandas as gpd
-            from shapely import from_wkb
-        except ImportError as e:
-            raise ImportError("Install geo extras: pip install warehouse-growth[geo]") from e
-
         if overture_release is None:
             overture_release = run_with_spinner(
                 "Discovering latest Overture release", latest_overture_release

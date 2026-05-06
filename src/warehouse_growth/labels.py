@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Iterable
+
+from shapely.strtree import STRtree
+from tqdm import tqdm
 
 if TYPE_CHECKING:
     from warehouse_growth.data_sources import VectorFeature
@@ -54,14 +58,6 @@ def label_footprints(
     Uses shapely 2.0's vectorised bulk STRtree query so the spatial index is
     traversed once for all footprints rather than once per footprint.
     """
-    try:
-        from collections import defaultdict
-
-        from shapely.strtree import STRtree
-        from tqdm import tqdm
-    except ImportError as e:
-        raise ImportError("Install geo extras: pip install warehouse-growth[geo]") from e
-
     tag_list = list(tags)
     fp_list = list(footprints)
 

@@ -37,7 +37,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--imgsz", type=int, default=1024,
                    help="Training image size in pixels (default: 1024)")
     p.add_argument("--batch", type=int, default=8,
-                   help="Batch size — reduce if GPU OOM (default: 8)")
+                   help="Batch size (default: 8). Use -1 to auto-detect via AutoBatch, "
+                        "which requires ~2 GB of free system RAM for probe tensors.")
     p.add_argument("--device", default=None,
                    help="Training device: 0 (GPU), cpu, mps (Apple Silicon). "
                         "Auto-detected when omitted.")
@@ -58,10 +59,31 @@ def main() -> None:
         sys.exit(1)
 
     import os
-    # GeoTIFF files contain proprietary tags that libtiff doesn't recognise;
-    # OpenCV surfaces these as WARNING-level noise. Raise the threshold to ERROR
-    # so they're suppressed without hiding real problems.
     os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
+    # Store MLflow runs inside the workspace so each AOI keeps its own history.
+    # MLFLOW_EXPERIMENT_NAME groups all runs for this workspace together.
+    mlflow_uri = f"sqlite:///{workspace.resolve() / 'mlruns.db'}"
+    os.environ.setdefault("MLFLOW_TRACKING_URI", mlflow_uri)
+    os.environ.setdefault("MLFLOW_EXPERIMENT_NAME", workspace.resolve().name)
+
+    # End any runs left open by a previous interrupted session.  Ultralytics'
+    # MLflow callback calls mlflow.log_metrics() with no error handling, so a
+    # stale RUNNING run causes the training loop to crash after epoch 1.
+    try:
+        import mlflow
+        mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
+        client = mlflow.tracking.MlflowClient()
+        exp = client.get_experiment_by_name(os.environ["MLFLOW_EXPERIMENT_NAME"])
+        if exp:
+            stale = client.search_runs(
+                experiment_ids=[exp.experiment_id],
+                filter_string="attributes.status = 'RUNNING'",
+            )
+            for run in stale:
+                client.set_terminated(run.info.run_id, status="FAILED")
+                print(f"Closed stale MLflow run {run.info.run_id[:8]}…")
+    except Exception:
+        pass  # MLflow unavailable or DB not yet created — fine
 
     try:
         from ultralytics import YOLO
@@ -113,7 +135,19 @@ def main() -> None:
     if args.device is not None:
         train_kwargs["device"] = args.device
 
-    results = model.train(**train_kwargs)
+    try:
+        results = model.train(**train_kwargs)
+    except KeyboardInterrupt:
+        print("\nTraining interrupted.")
+        results = None
+    finally:
+        # Explicitly release GPU memory so the CUDA context doesn't linger in WSL2.
+        del model
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
 
     best_pt = output_dir / "warehouse_seg" / "weights" / "best.pt"
     print("\nTraining complete.")
