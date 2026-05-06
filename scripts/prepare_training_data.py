@@ -5,12 +5,12 @@ Steps
 -----
 1. Load labeled_footprints_2022.parquet (requires label_prototype_data.py first).
 2. Search NAIP STAC for 2022 tiles covering the Reno-Sparks AOI.
-3. For each tile:
+3. For each tile (processed in parallel):
    - Download the full GeoTIFF to raw_tiles/ (skipped on repeat runs).
    - Slice into PATCH_SIZE × PATCH_SIZE patches with STRIDE overlap.
    - For each patch: project warehouse polygons → normalised YOLO segment
      annotations.  Positive patches are always kept; negatives are sampled
-     at NEG_SAMPLE_RATE.
+     at NEG_SAMPLE_RATE using a per-patch deterministic RNG.
 4. Shuffle and split into train / val (80 / 20) at the TILE level so the
    same tile's patches don't appear in both splits.
 5. Write dataset.yaml for `ultralytics YOLO.train()`.
@@ -19,61 +19,51 @@ Usage
 -----
     python scripts/prepare_training_data.py [workspace_dir]
 
+Parallelism is controlled by the TILING_WORKERS environment variable
+(default: all available CPUs).
+
 Default workspace: ./runs/reno_sparks_demo
 """
 from __future__ import annotations
 
 import json
+import os
 import random
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import urlparse
 
 import geopandas as gpd
 import planetary_computer as pc
 import yaml
-from shapely.geometry import box
-from shapely.strtree import STRtree
 from tqdm import tqdm
 
 from warehouse_growth.adapters import NAIPImagerySource
-from warehouse_growth.tiling import sliding_windows
-from warehouse_growth.training import download_naip_tile, geo_polygon_to_yolo, write_label_file
+from warehouse_growth.training import init_patch_worker, process_tile_task
 
-
-def _fresh_uri(uri: str) -> str:
-    """Return a freshly signed URL, stripping any existing SAS token first.
-
-    MPC SAS tokens are valid for ~25 hours from issuance.  Re-signing before
-    each download means a script paused overnight won't 403 on resume.
-    """
-    base = urlparse(uri)._replace(query="", fragment="").geturl()
-    return pc.sign(base)
-
-RENO_AOI = box(-120.05, 39.40, -119.45, 39.70)
+RENO_AOI_BBOX = (-120.05, 39.40, -119.45, 39.70)
 EPOCH = "2022"
 WAREHOUSE_CLASS_ID = 0
 TRAIN_FRAC = 0.8
 PATCH_SIZE = 1024
 STRIDE = 768
-NEG_SAMPLE_RATE = 0.20   # fraction of non-warehouse patches to keep as hard negatives
+NEG_SAMPLE_RATE = 0.20
 SEED = 42
-
-random.seed(SEED)
 
 
 def main(workspace: Path) -> None:
+    from shapely.geometry import box
+    RENO_AOI = box(*RENO_AOI_BBOX)
+
     labels_path = workspace / f"labeled_footprints_{EPOCH}.parquet"
     if not labels_path.exists():
         raise FileNotFoundError(f"Run label_prototype_data.py first: {labels_path}")
 
     print("Loading labeled footprints …")
     gdf = gpd.read_parquet(labels_path)
-    warehouse_gdf = gdf[gdf["label"] == "warehouse"].reset_index(drop=True)
-    print(f"  {len(warehouse_gdf):,} warehouse buildings (class 0)")
-
-    warehouse_geoms = warehouse_gdf.geometry.tolist()
-    wh_tree = STRtree(warehouse_geoms)
+    n_warehouse = (gdf["label"] == "warehouse").sum()
+    print(f"  {n_warehouse:,} warehouse buildings (class 0)")
 
     # ── Fetch tile list from STAC (cached after first successful query) ────
     tile_cache = workspace / f"naip_tile_cache_{EPOCH}.json"
@@ -88,7 +78,7 @@ def main(workspace: Path) -> None:
         naip = NAIPImagerySource()
         assets = list(naip.assets_for_aoi(RENO_AOI, EPOCH))
         print(f"  {len(assets)} tiles")
-        # Strip SAS tokens before caching — we re-sign fresh at download time.
+        # Strip SAS tokens before caching — re-signed fresh at download time.
         records = [
             {
                 "uri": urlparse(a.uri)._replace(query="", fragment="").geturl(),
@@ -103,6 +93,7 @@ def main(workspace: Path) -> None:
         print(f"  tile list cached → {tile_cache.name}")
 
     # ── Shuffle and assign train / val splits at the TILE level ───────────
+    random.seed(SEED)
     shuffled = assets[:]
     random.shuffle(shuffled)
     split_at = int(len(shuffled) * TRAIN_FRAC)
@@ -114,102 +105,54 @@ def main(workspace: Path) -> None:
         (dataset_dir / "images" / split).mkdir(parents=True, exist_ok=True)
         (dataset_dir / "labels" / split).mkdir(parents=True, exist_ok=True)
 
-    # ── Import heavy dependencies lazily ──────────────────────────────────
-    import numpy as np
-    import rasterio
-    from affine import Affine
-    from rasterio.transform import array_bounds
-    from rasterio.warp import transform_bounds
+    # ── Build per-tile task descriptors ───────────────────────────────────
+    tasks = [
+        {
+            # Always store the unsigned base URI; workers re-sign just before
+            # downloading so a long-running job never hits an expired SAS token.
+            "uri": urlparse(asset.uri)._replace(query="", fragment="").geturl(),
+            "split": "train" if rank < split_at else "val",
+            "dataset_dir": str(dataset_dir),
+            "raw_tile_dir": str(raw_tile_dir),
+            "patch_size": PATCH_SIZE,
+            "stride": STRIDE,
+            "neg_sample_rate": NEG_SAMPLE_RATE,
+            "warehouse_class_id": WAREHOUSE_CLASS_ID,
+        }
+        for rank, asset in enumerate(shuffled)
+    ]
+
+    n_workers = min(
+        int(os.environ.get("TILING_WORKERS", os.cpu_count() or 1)),
+        len(tasks),
+    )
 
     stats = {"train": {"pos": 0, "neg": 0}, "val": {"pos": 0, "neg": 0}}
 
-    print(f"\nSlicing tiles into {PATCH_SIZE}×{PATCH_SIZE} patches (stride {STRIDE}) …")
-    for rank, asset in enumerate(tqdm(shuffled, unit=" tile")):
-        split = "train" if rank < split_at else "val"
-
-        # urlparse extracts the clean path, ignoring the SAS token query string.
-        tile_name = Path(urlparse(asset.uri).path).stem
-        raw_path = raw_tile_dir / f"{tile_name}.tif"
-
-        if not raw_path.exists():
+    print(
+        f"\nSlicing tiles into {PATCH_SIZE}×{PATCH_SIZE} patches "
+        f"(stride {STRIDE}, {n_workers} workers) …"
+    )
+    with ProcessPoolExecutor(
+        max_workers=n_workers,
+        initializer=init_patch_worker,
+        initargs=(str(labels_path),),
+    ) as pool:
+        futures = {pool.submit(process_tile_task, task): task for task in tasks}
+        for future in tqdm(as_completed(futures), total=len(futures), unit=" tile"):
             try:
-                # Strip the old SAS token and re-sign fresh so a long-running
-                # script or a resume-after-sleep doesn't hit 403 on expired tokens.
-                download_uri = _fresh_uri(asset.uri)
-                download_naip_tile(download_uri, raw_path)
+                tile_result = future.result()
             except Exception as exc:
-                tqdm.write(f"  SKIP {tile_name}: {exc}")
+                task = futures[future]
+                tile_name = Path(urlparse(task["uri"]).path).stem
+                tqdm.write(f"  ERROR {tile_name}: {exc}")
                 continue
-
-        with rasterio.open(raw_path) as src:
-            tile_crs = src.crs
-            tile_transform = src.transform
-            tile_w, tile_h = src.width, src.height
-            # Read full tile into memory once; cheaper than many window reads.
-            img_full = src.read([1, 2, 3])  # shape (3, H, W)
-
-        for win in sliding_windows(tile_w, tile_h, PATCH_SIZE, STRIDE):
-            # Affine transform for this patch (origin at patch top-left pixel).
-            patch_transform = tile_transform * Affine.translation(win.x, win.y)
-
-            # Geographic bounding box of the patch → EPSG:4326 for tree query.
-            left, bottom, right, top = array_bounds(
-                win.height, win.width, patch_transform
-            )
-            b4326 = transform_bounds(
-                str(tile_crs), "EPSG:4326", left, bottom, right, top
-            )
-            patch_box_4326 = box(*b4326)
-
-            hit_idxs = wh_tree.query(patch_box_4326, predicate="intersects")
-
-            instances: list[tuple[int, list[float]]] = []
-            for idx in hit_idxs.tolist():
-                geom = warehouse_geoms[idx]
-                if geom.geom_type != "Polygon":
-                    continue
-                if not patch_box_4326.contains(geom):
-                    continue
-                pts = geo_polygon_to_yolo(
-                    geom,
-                    patch_transform,
-                    str(tile_crs),
-                    win.width,
-                    win.height,
-                )
-                if pts:
-                    instances.append((WAREHOUSE_CLASS_ID, pts))
-
-            is_positive = bool(instances)
-            patch_name = f"{tile_name}_{win.x}_{win.y}"
-            img_path = dataset_dir / "images" / split / f"{patch_name}.tif"
-            lbl_path = dataset_dir / "labels" / split / f"{patch_name}.txt"
-
-            # For new patches, apply sampling to decide whether to include them.
-            # For patches whose image already exists, always refresh the label so
-            # re-runs with updated annotation logic don't leave stale files.
-            if not img_path.exists():
-                if not is_positive and random.random() > NEG_SAMPLE_RATE:
-                    continue
-
-            if not img_path.exists():
-                patch_img = img_full[:, win.y:win.y + win.height, win.x:win.x + win.width]
-                patch_profile = {
-                    "driver": "GTiff",
-                    "count": 3,
-                    "dtype": patch_img.dtype,
-                    "width": win.width,
-                    "height": win.height,
-                    "crs": tile_crs,
-                    "transform": patch_transform,
-                    "compress": "deflate",
-                    "tiled": True,
-                }
-                with rasterio.open(img_path, "w", **patch_profile) as dst:
-                    dst.write(patch_img)
-
-            write_label_file(lbl_path, instances)
-            stats[split]["pos" if is_positive else "neg"] += 1
+            if tile_result["error"]:
+                tqdm.write(f"  SKIP {tile_result['tile_name']}: {tile_result['error']}")
+                continue
+            split = tile_result["split"]
+            stats[split]["pos"] += tile_result["pos"]
+            stats[split]["neg"] += tile_result["neg"]
 
     # ── Write dataset.yaml ─────────────────────────────────────────────────
     yaml_path = dataset_dir / "dataset.yaml"
