@@ -29,15 +29,15 @@ Commit the generated `uv.lock` to the repo for reproducible installs.
 
 ## Training Pipeline
 
-The full pipeline runs in four steps. Each script accepts an optional
-`workspace_dir` argument (default: `./runs/reno_sparks_demo`).
+The full pipeline runs in six steps. Scripts 1–3 and 6 take a config file path;
+the trainer (step 4) takes a workspace directory.
 
 ### 1. Download source data
 
 Downloads Microsoft building footprints and OSM tags for the AOI.
 
 ```bash
-uv run python scripts/download_prototype_data.py
+uv run python scripts/download_prototype_data.py configs/reno_sparks_demo.json
 ```
 
 ### 2. Label footprints
@@ -46,7 +46,7 @@ Spatially joins footprints with OSM tags to assign `warehouse` / `non_warehouse`
 / `ambiguous_industrial` labels, then writes a GeoParquet file.
 
 ```bash
-uv run python scripts/label_prototype_data.py
+uv run python scripts/label_prototype_data.py configs/reno_sparks_demo.json
 ```
 
 ### 3. Prepare training dataset
@@ -55,7 +55,7 @@ Downloads NAIP tiles, slices them into 1024×1024 patches, and writes YOLO
 segmentation annotations. Raw tiles are cached so re-runs only redo the slicing.
 
 ```bash
-uv run python scripts/prepare_training_data.py
+uv run python scripts/prepare_training_data.py configs/reno_sparks_demo.json
 ```
 
 If you change annotation logic (boundary filter, sampling rate, class
@@ -69,7 +69,7 @@ Fine-tunes a YOLOv8 segmentation model on the prepared dataset.
 
 ```bash
 uv sync --extra models
-uv run python scripts/train_warehouse_detector.py
+uv run python scripts/train_warehouse_detector.py runs/reno_sparks_demo
 ```
 
 Key options:
@@ -86,7 +86,7 @@ Key options:
 If the run is interrupted, resume it without losing progress:
 
 ```bash
-uv run python scripts/train_warehouse_detector.py --resume
+uv run python scripts/train_warehouse_detector.py runs/reno_sparks_demo --resume
 ```
 
 The best checkpoint is saved to `<workspace>/training/runs/warehouse_seg/weights/best.pt`.
@@ -103,6 +103,53 @@ uv run python scripts/plot_loss_curves.py path/to/results.csv    # direct CSV pa
 
 The plot is saved as `loss_curves.png` alongside `results.csv` in the run directory.
 Re-run it at any point during training to see the latest epochs.
+
+### 6. Evaluate with footprint-anchored metrics
+
+YOLO's built-in validation metrics count any detection without a matching label
+file as a false positive. Because OSM coverage is incomplete, real warehouses that
+lack OSM tags produce empty label files — making the built-in numbers misleading.
+
+The footprint-anchored evaluation scores predictions only at known footprint
+locations:
+
+- **TP** — detection whose IoU with a labeled warehouse footprint ≥ threshold
+- **FP** — detection that overlaps a confirmed non-warehouse footprint
+- **ignored** — detection in a region with no labeled footprint (excluded from both precision and recall)
+- **FN** — labeled warehouse footprint in the val coverage area not matched by any detection
+
+```bash
+uv run python scripts/evaluate_footprint.py configs/reno_sparks_demo.json
+```
+
+Key options:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--checkpoint PATH` | `<workspace>/training/runs/warehouse_seg/weights/best.pt` | Model weights |
+| `--iou-threshold T` | `0.5` | Minimum IoU to count a detection as a TP |
+| `--confidence C` | `0.25` | Detector confidence threshold |
+
+Example output:
+
+```
+────────────────────────────────────────────
+Footprint-anchored evaluation
+  val patches          : 123
+  total detections     : 87
+  ignored (unlabeled)  : 34
+  TP=44  FP=9  FN=14
+────────────────────────────────────────────
+  Precision : 0.831
+  Recall    : 0.759
+  F1        : 0.793
+────────────────────────────────────────────
+```
+
+Precision is optimistic (detections in unlabeled regions aren't penalized) while
+recall is meaningful — every known warehouse in the val area that the model misses
+counts as a false negative. Compare both the footprint-anchored F1 and the YOLO
+mAP from `results.csv` to get a full picture.
 
 ### Experiment tracking
 
@@ -125,6 +172,7 @@ scripts/                        End-to-end pipeline scripts
   prepare_training_data.py      Slice NAIP tiles into YOLO-format patches
   train_warehouse_detector.py   Fine-tune YOLOv8 segmentation model
   plot_loss_curves.py           Plot training vs validation losses from results.csv
+  evaluate_footprint.py         Footprint-anchored precision/recall over the val set
 src/warehouse_growth/           Python package
   cli.py                        Command-line entry points
   config.py                     Config loading and validation
@@ -150,6 +198,7 @@ tests/                          Fast unit tests for core geometry/config logic
 - [x] Labeled pilot dataset — Reno-Sparks NV, 2022 NAIP
 - [x] YOLO segmentation training pipeline with MLflow experiment tracking
 - [x] Checkpoint resume support
+- [x] Footprint-anchored evaluation metrics (precision/recall over known footprint locations)
 - [ ] Warehouse classifier over detected footprints and contextual features
 - [ ] Multi-epoch change detection (cross-epoch footprint matching)
 - [ ] Road-mask recall evaluation before applying mask at larger scale

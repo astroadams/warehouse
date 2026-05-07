@@ -29,7 +29,6 @@ from __future__ import annotations
 import json
 import os
 import random
-import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import urlparse
@@ -229,5 +228,8 @@ def main(config_path: Path) -> None:
 
 
 if __name__ == "__main__":
-    cfg = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("configs/reno_sparks_demo.json")
-    main(cfg)
+    import argparse
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("config", nargs="?", default="configs/reno_sparks_demo.json",
+                   type=Path, help="Path to project config JSON/YAML (default: configs/reno_sparks_demo.json)")
+    main(p.parse_args().config)
