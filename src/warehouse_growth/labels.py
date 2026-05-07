@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 class BuildingLabel(str, Enum):
     WAREHOUSE = "warehouse"
     NON_WAREHOUSE = "non_warehouse"
-    AMBIGUOUS_INDUSTRIAL = "ambiguous_industrial"
+    AMBIGUOUS = "ambiguous"
 
 
 @dataclass(frozen=True)
@@ -28,20 +28,25 @@ class BuildingInstance:
 
 # OSM `building=` values that map to each label class.
 _WAREHOUSE_TAGS = frozenset({"warehouse", "logistics", "distribution_center", "storage"})
-_INDUSTRIAL_TAGS = frozenset({"industrial", "manufacture", "factory", "works", "shed"})
+# Includes industrial types that could be warehouses, plus unspecified tags ("yes", "")
+# that carry no type information — none are usable as confident negatives.
+_AMBIGUOUS_TAGS = frozenset({
+    "industrial", "manufacture", "factory", "works", "shed",
+    "yes", "",
+})
 
 
 def label_from_osm_tags(tags: dict) -> BuildingLabel:
     """Map OSM building tags to a BuildingLabel.
 
-    Unrecognised or absent tags return NON_WAREHOUSE rather than AMBIGUOUS so
-    that the ambiguous bucket stays reserved for known-industrial-but-unclear cases.
+    WAREHOUSE for known warehouse types, AMBIGUOUS for industrial/unspecified types,
+    NON_WAREHOUSE for everything else (house, church, school, etc.).
     """
     building = tags.get("building", "").lower().strip()
     if building in _WAREHOUSE_TAGS:
         return BuildingLabel.WAREHOUSE
-    if building in _INDUSTRIAL_TAGS:
-        return BuildingLabel.AMBIGUOUS_INDUSTRIAL
+    if building in _AMBIGUOUS_TAGS:
+        return BuildingLabel.AMBIGUOUS
     return BuildingLabel.NON_WAREHOUSE
 
 
@@ -53,7 +58,7 @@ def label_footprints(
     """Assign labels to Microsoft footprints by spatial join with OSM tag features.
 
     Each footprint is matched to the OSM feature with the greatest overlap area.
-    Footprints with no OSM match are labelled NON_WAREHOUSE.
+    Footprints with no OSM match are labelled AMBIGUOUS (building type unknown).
 
     Uses shapely 2.0's vectorised bulk STRtree query so the spatial index is
     traversed once for all footprints rather than once per footprint.
@@ -63,7 +68,7 @@ def label_footprints(
 
     if not tag_list:
         return [
-            BuildingInstance(geometry=fp.geometry, label=BuildingLabel.NON_WAREHOUSE, epoch=epoch)
+            BuildingInstance(geometry=fp.geometry, label=BuildingLabel.AMBIGUOUS, epoch=epoch)
             for fp in fp_list
         ]
 
@@ -83,7 +88,7 @@ def label_footprints(
     for i, fp in enumerate(tqdm(fp_list, desc="Labelling footprints", unit=" fp", leave=True)):
         candidates = matches.get(i)
         if not candidates:
-            label = BuildingLabel.NON_WAREHOUSE
+            label = BuildingLabel.AMBIGUOUS
         elif len(candidates) == 1:
             label = label_from_osm_tags(tag_list[candidates[0]].properties)
         else:
@@ -95,4 +100,4 @@ def label_footprints(
 
 def filter_trainable_labels(instances: list[BuildingInstance]) -> list[BuildingInstance]:
     """Drop ambiguous instances from binary warehouse training sets."""
-    return [item for item in instances if item.label is not BuildingLabel.AMBIGUOUS_INDUSTRIAL]
+    return [item for item in instances if item.label is not BuildingLabel.AMBIGUOUS]

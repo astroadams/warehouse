@@ -8,14 +8,18 @@ from warehouse_growth.config import ProjectConfig, load_config
 
 def _format_plan(config: ProjectConfig) -> str:
     epoch_names = ", ".join(epoch.name for epoch in config.epochs)
-    road_classes = ", ".join(config.road_mask.road_classes)
+    if config.road_mask is not None:
+        road_classes = ", ".join(config.road_mask.road_classes)
+        road_line = f"Road mask: {config.road_mask.buffer_meters:g} m around {road_classes}"
+    else:
+        road_line = "Road mask: none (full AOI)"
     return "\n".join(
         [
             f"Project: {config.project_name}",
             f"Workspace: {config.workspace}",
             f"AOI: {config.aoi.name} {config.aoi.bbox} ({config.aoi.crs})",
             f"Epochs: {epoch_names}",
-            f"Road mask: {config.road_mask.buffer_meters:g} m around {road_classes}",
+            road_line,
             f"Tiling: {config.tiling.tile_size_px}px tiles, {config.tiling.stride_px}px stride",
             f"Detector: {config.detector.type} / {config.detector.task}",
             f"Warehouse classifier: {'enabled' if config.classifier.enabled else 'disabled'}",

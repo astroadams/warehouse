@@ -9,12 +9,6 @@
   },
   "epochs": [
     {
-      "name": "2019",
-      "start_date": "2019-01-01",
-      "end_date": "2019-12-31",
-      "imagery_uri": "stac://earth-search.aws.element84.com/v1/naip"
-    },
-    {
       "name": "2022",
       "start_date": "2022-01-01",
       "end_date": "2022-12-31",

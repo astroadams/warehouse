@@ -147,6 +147,12 @@ def process_tile_task(task: dict) -> dict:
     neg_sample_rate: float = task["neg_sample_rate"]
     warehouse_class_id: int = task["warehouse_class_id"]
 
+    road_mask_wkt: str | None = task.get("road_mask_wkt")
+    road_mask_geom = None
+    if road_mask_wkt is not None:
+        from shapely.wkt import loads as wkt_loads
+        road_mask_geom = wkt_loads(road_mask_wkt)
+
     tile_name = Path(urlparse(uri).path).stem
     raw_path = raw_tile_dir / f"{tile_name}.tif"
     result: dict = {"tile_name": tile_name, "split": split, "pos": 0, "neg": 0, "error": None}
@@ -173,6 +179,9 @@ def process_tile_task(task: dict) -> dict:
         left, bottom, right, top = array_bounds(win.height, win.width, patch_transform)
         b4326 = transform_bounds(str(tile_crs), "EPSG:4326", left, bottom, right, top)
         patch_box_4326 = box(*b4326)
+
+        if road_mask_geom is not None and not road_mask_geom.intersects(patch_box_4326):
+            continue
 
         hit_idxs = wh_tree.query(patch_box_4326, predicate="intersects")
 

@@ -10,12 +10,33 @@ Usage:
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
-from shapely.geometry import box
+from shapely.geometry import box, mapping, shape
 
 from warehouse_growth.config import load_config
+
+
+def compute_road_mask_aoi(config, workspace: Path):
+    """Fetch OSM roads, build road-mask AOI, cache to road_mask_aoi.geojson."""
+    cache_path = workspace / "road_mask_aoi.geojson"
+    if cache_path.exists():
+        print(f"[road] Using cached road-mask AOI: {cache_path.name}")
+        with open(cache_path) as f:
+            return shape(json.load(f)["geometry"])
+
+    print("[road] Fetching OSM roads to build road-mask AOI …")
+    from warehouse_growth.adapters import OverpassRoadSource
+    from warehouse_growth.road_mask import aoi_from_road_mask
+
+    road_source = OverpassRoadSource()
+    mask_geom = aoi_from_road_mask(config.aoi.bbox, config.road_mask, road_source)
+    with open(cache_path, "w") as f:
+        json.dump({"type": "Feature", "geometry": mapping(mask_geom), "properties": {}}, f)
+    print(f"[road] Road-mask AOI cached → {cache_path.name}\n")
+    return mask_geom
 
 
 def download_msft_footprints(aoi, workspace: Path) -> None:
@@ -80,7 +101,6 @@ def list_naip_assets(aoi, epoch_names: list[str]) -> None:
 
 def main(config_path: Path) -> None:
     config = load_config(config_path)
-    aoi = box(*config.aoi.bbox)
     epoch_names = [e.name for e in config.epochs]
 
     config.workspace.mkdir(parents=True, exist_ok=True)
@@ -88,6 +108,11 @@ def main(config_path: Path) -> None:
     print(f"AOI      : {config.aoi.name}  {config.aoi.bbox}")
     print(f"Epochs   : {', '.join(epoch_names)}")
     print(f"Workspace: {config.workspace.resolve()}\n")
+
+    if config.road_mask is not None:
+        aoi = compute_road_mask_aoi(config, config.workspace)
+    else:
+        aoi = box(*config.aoi.bbox)
 
     download_msft_footprints(aoi, config.workspace)
     download_osm_tags(aoi, config.workspace)

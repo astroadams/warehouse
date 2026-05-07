@@ -57,9 +57,10 @@ def _process_epoch(
     raw_tile_dir: Path,
     labels_path: Path,
     seed_offset: int,
+    aoi_geom=None,
 ) -> dict[str, dict[str, int]]:
     """Search, download, slice, and annotate all NAIP tiles for one epoch."""
-    aoi = box(*config.aoi.bbox)
+    aoi = aoi_geom if aoi_geom is not None else box(*config.aoi.bbox)
 
     tile_cache = config.workspace / f"naip_tile_cache_{epoch.name}.json"
     if tile_cache.exists():
@@ -95,6 +96,8 @@ def _process_epoch(
     random.shuffle(shuffled)
     split_at = int(len(shuffled) * TRAIN_FRAC)
 
+    road_mask_wkt = aoi_geom.wkt if aoi_geom is not None else None
+
     tasks = [
         {
             # Store unsigned base URI; workers re-sign just before downloading
@@ -107,6 +110,7 @@ def _process_epoch(
             "stride": config.tiling.stride_px,
             "neg_sample_rate": NEG_SAMPLE_RATE,
             "warehouse_class_id": WAREHOUSE_CLASS_ID,
+            "road_mask_wkt": road_mask_wkt,
         }
         for rank, asset in enumerate(shuffled)
     ]
@@ -146,6 +150,20 @@ def _process_epoch(
     return stats
 
 
+def _load_aoi_geom(config):
+    """Return the road-mask AOI geometry if configured and cached, else None."""
+    if config.road_mask is None:
+        return None
+    cache_path = config.workspace / "road_mask_aoi.geojson"
+    if not cache_path.exists():
+        print(f"Warning: road_mask configured but {cache_path.name} not found — using full AOI")
+        return None
+    import json
+    from shapely.geometry import shape
+    with open(cache_path) as f:
+        return shape(json.load(f)["geometry"])
+
+
 def main(config_path: Path) -> None:
     config = load_config(config_path)
     print(f"Project : {config.project_name}")
@@ -158,6 +176,8 @@ def main(config_path: Path) -> None:
     for split in ("train", "val"):
         (dataset_dir / "images" / split).mkdir(parents=True, exist_ok=True)
         (dataset_dir / "labels" / split).mkdir(parents=True, exist_ok=True)
+
+    aoi_geom = _load_aoi_geom(config)
 
     total_stats: dict[str, dict[str, int]] = {"train": {"pos": 0, "neg": 0}, "val": {"pos": 0, "neg": 0}}
 
@@ -175,7 +195,7 @@ def main(config_path: Path) -> None:
         n_warehouse = (gdf["label"] == "warehouse").sum()
         print(f"  {n_warehouse:,} warehouse buildings")
 
-        epoch_stats = _process_epoch(epoch, config, dataset_dir, raw_tile_dir, labels_path, seed_offset=i)
+        epoch_stats = _process_epoch(epoch, config, dataset_dir, raw_tile_dir, labels_path, seed_offset=i, aoi_geom=aoi_geom)
 
         for split in ("train", "val"):
             total_stats[split]["pos"] += epoch_stats[split]["pos"]

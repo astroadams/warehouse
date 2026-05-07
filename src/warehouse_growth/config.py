@@ -60,7 +60,7 @@ class ProjectConfig:
     workspace: Path
     aoi: AoiConfig
     epochs: list[EpochConfig]
-    road_mask: RoadMaskConfig = field(default_factory=RoadMaskConfig)
+    road_mask: RoadMaskConfig | None = None
     tiling: TilingConfig = field(default_factory=TilingConfig)
     detector: DetectorConfig = field(default_factory=DetectorConfig)
     classifier: ClassifierConfig = field(default_factory=ClassifierConfig)
@@ -92,7 +92,7 @@ def parse_config(raw: dict[str, Any]) -> ProjectConfig:
             )
             for item in epochs
         ],
-        road_mask=RoadMaskConfig(**raw.get("road_mask", {})),
+        road_mask=RoadMaskConfig(**raw["road_mask"]) if "road_mask" in raw else None,
         tiling=TilingConfig(**raw.get("tiling", {})),
         detector=DetectorConfig(**raw.get("detector", {})),
         classifier=ClassifierConfig(**raw.get("classifier", {})),

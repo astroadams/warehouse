@@ -2,7 +2,7 @@
 """Spatial-join Microsoft footprints with OSM tags and write labeled GeoParquet.
 
 Reads the two caches produced by download_prototype_data.py and runs
-label_footprints() to assign WAREHOUSE / NON_WAREHOUSE / AMBIGUOUS_INDUSTRIAL
+label_footprints() to assign WAREHOUSE / NON_WAREHOUSE / AMBIGUOUS
 to each building footprint in the AOI.
 
 The spatial join is epoch-agnostic (footprint geometry and OSM tags do not change
