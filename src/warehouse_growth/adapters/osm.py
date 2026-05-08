@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import date
 from typing import Any, Iterable
 
 import requests
@@ -26,7 +27,7 @@ _REQUEST_HEADERS = {
 # for large industrial/warehouse structures, so this covers the practical majority.
 # Extend to relations if completeness in dense urban areas matters.
 _QUERY_TEMPLATE = """\
-[out:json][timeout:{timeout}];
+[out:json][timeout:{timeout}]{date_setting};
 (
   way["building"]({bbox});
 );
@@ -136,13 +137,24 @@ class OverpassTagSource:
         self.url = url
         self.timeout = timeout
 
-    def tags_for_aoi(self, aoi: Any, *, grid: int = 4) -> Iterable[VectorFeature]:
+    def tags_for_aoi(
+        self,
+        aoi: Any,
+        *,
+        grid: int = 4,
+        as_of_date: date | None = None,
+    ) -> Iterable[VectorFeature]:
         """Yield OSM building features intersecting the AOI.
 
         `grid` splits the AOI into a grid×grid mesh of sub-queries (default 2×2=4
         tiles). Increase it if you get 406 errors on a large AOI; each tile must fit
         within Overpass's single-query area limit (~0.25 deg² works reliably).
+
+        `as_of_date` returns the historical state of OSM on that date via the
+        Overpass [date:...] setting.  When None, the current live state is returned.
         """
+        date_setting = f'[date:"{as_of_date}T23:59:59Z"]' if as_of_date else ""
+
         minx, miny, maxx, maxy = aoi.bounds
         x_step = (maxx - minx) / grid
         y_step = (maxy - miny) / grid
@@ -160,7 +172,7 @@ class OverpassTagSource:
             tmx, tmy, tmxx, tmyy = tile.bounds
             # Overpass bbox order: south, west, north, east
             bbox = f"{tmy},{tmx},{tmyy},{tmxx}"
-            query = _QUERY_TEMPLATE.format(timeout=self.timeout, bbox=bbox)
+            query = _QUERY_TEMPLATE.format(timeout=self.timeout, bbox=bbox, date_setting=date_setting)
 
             response = None
             for attempt in range(4):

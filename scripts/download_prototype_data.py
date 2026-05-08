@@ -58,35 +58,41 @@ def download_msft_footprints(aoi, workspace: Path, config_path: Path) -> None:
     print(f"[msft] {len(footprints):,} building footprints in AOI\n")
 
 
-def download_osm_tags(aoi, workspace: Path, config_path: Path) -> None:
+def download_osm_tags(aoi, workspace: Path, config_path: Path, epochs) -> None:
+    """Download a per-epoch OSM tag snapshot for each epoch in the config.
+
+    Each epoch gets its own ``osm_tags_{epoch.name}.parquet`` queried with the
+    Overpass [date:...] setting so tags reflect OSM state at the epoch's end_date.
+    An epoch whose cache file already exists is skipped.
+    """
     import geopandas as gpd
     from warehouse_growth.adapters import OverpassTagSource
 
-    cache_path = workspace / "osm_tags.parquet"
-    if cache_path.exists():
-        print(f"[osm]  Using cached OSM tags: {cache_path.name}")
-        provenance.check(cache_path)
-        gdf = gpd.read_parquet(cache_path)
-        tag_series = gdf.get("building")
-    else:
-        print("[osm]  Querying Overpass API for buildings in AOI …")
-        source = OverpassTagSource()
-        tag_list = list(source.tags_for_aoi(aoi))
+    source = OverpassTagSource()
 
-        gdf = gpd.GeoDataFrame(
-            [{"geometry": t.geometry, **t.properties} for t in tag_list],
-            crs="EPSG:4326",
-        )
-        gdf.to_parquet(cache_path)
-        provenance.write(cache_path, config_path)
-        tag_series = gdf.get("building")
+    for epoch in epochs:
+        cache_path = workspace / f"osm_tags_{epoch.name}.parquet"
+        if cache_path.exists():
+            print(f"[osm]  Using cached OSM tags ({epoch.name}): {cache_path.name}")
+            provenance.check(cache_path)
+            gdf = gpd.read_parquet(cache_path)
+        else:
+            print(f"[osm]  Querying Overpass API for buildings at {epoch.end_date} (epoch {epoch.name}) …")
+            tag_list = list(source.tags_for_aoi(aoi, as_of_date=epoch.end_date))
+            gdf = gpd.GeoDataFrame(
+                [{"geometry": t.geometry, **t.properties} for t in tag_list],
+                crs="EPSG:4326",
+            )
+            gdf.to_parquet(cache_path)
+            provenance.write(cache_path, config_path, epoch=epoch.name)
 
-    print(f"[osm]  {len(gdf):,} building features")
-    if tag_series is not None:
-        print("[osm]  Top building= tags:")
-        for tag, count in tag_series.value_counts().head(10).items():
-            print(f"         {tag:<30s} {count:>5,}")
-    print()
+        tag_series = gdf.get("building")
+        print(f"[osm]  {len(gdf):,} building features (epoch {epoch.name})")
+        if tag_series is not None:
+            print(f"[osm]  Top building= tags (epoch {epoch.name}):")
+            for tag, count in tag_series.value_counts().head(10).items():
+                print(f"         {tag:<30s} {count:>5,}")
+        print()
 
 
 def list_naip_assets(aoi, epoch_names: list[str]) -> None:
@@ -121,7 +127,7 @@ def main(config_path: Path) -> None:
         aoi = box(*config.aoi.bbox)
 
     download_msft_footprints(aoi, config.workspace, config_path)
-    download_osm_tags(aoi, config.workspace, config_path)
+    download_osm_tags(aoi, config.workspace, config_path, config.epochs)
     list_naip_assets(aoi, epoch_names)
 
     print("Done.  Run the labeling step next:")

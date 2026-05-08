@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, Iterable, Protocol
 
@@ -36,8 +37,13 @@ class FootprintSource(Protocol):
 
 
 class TagSource(Protocol):
-    def tags_for_aoi(self, aoi: Any) -> Iterable[VectorFeature]:
-        """Return building features with OSM-style tags intersecting an AOI."""
+    def tags_for_aoi(self, aoi: Any, *, as_of_date: date | None = None) -> Iterable[VectorFeature]:
+        """Return building features with OSM-style tags intersecting an AOI.
+
+        If *as_of_date* is provided, return the state of tags as they existed
+        on that date (historical snapshot).  Adapters that do not support
+        temporal filtering ignore this parameter.
+        """
 
 
 class LocalGeoPackageRoadSource:
