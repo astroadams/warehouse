@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Footprint-anchored evaluation of a trained warehouse detector.
 
-Runs inference on the validation patch set and scores predictions only at
-locations where labeled footprints (warehouse or non_warehouse) exist.
-Detections in regions with no labeled footprint are ignored rather than
-counted as false positives — appropriate for datasets with incomplete OSM
-coverage.
+Runs inference on the validation patch set and scores predictions against
+labeled footprints (warehouse or non_warehouse). Detections in areas where
+no building exists in the combined MSFT + OSM footprint set are counted as
+false positives. Pass --ignore-vacant to revert to the legacy behavior of
+ignoring such detections instead.
 
 Usage
 -----
@@ -32,10 +32,12 @@ from warehouse_growth.config import load_config
 from warehouse_growth.evaluation import binary_metrics, match_detections_to_footprints
 
 
-def _load_footprints(workspace: Path) -> tuple[list, list, str]:
+def _load_footprints(workspace: Path) -> tuple[list, list, list, str]:
     """Load and combine labeled footprints from all epochs, split by label.
 
-    Returns (warehouse_geoms, non_warehouse_geoms, crs_string).
+    Returns (warehouse_geoms, non_warehouse_geoms, all_building_geoms, crs_string).
+    all_building_geoms is the union of all labels (warehouse + non_warehouse + ambiguous)
+    and is used to penalize detections over areas confirmed to have no building.
     """
     parquets = sorted(workspace.glob("labeled_footprints_*.parquet"))
     if not parquets:
@@ -52,26 +54,29 @@ def _load_footprints(workspace: Path) -> tuple[list, list, str]:
 
     warehouse_geoms = gdf[gdf["label"] == "warehouse"].geometry.tolist()
     non_warehouse_geoms = gdf[gdf["label"] == "non_warehouse"].geometry.tolist()
+    all_building_geoms = gdf.geometry.tolist()
     print(
         f"  Loaded footprints: {len(warehouse_geoms):,} warehouse, "
-        f"{len(non_warehouse_geoms):,} non_warehouse "
+        f"{len(non_warehouse_geoms):,} non_warehouse, "
+        f"{len(all_building_geoms) - len(warehouse_geoms) - len(non_warehouse_geoms):,} ambiguous "
         f"(from {len(parquets)} epoch file{'s' if len(parquets) != 1 else ''})"
         f" — CRS: {footprint_crs}"
     )
-    return warehouse_geoms, non_warehouse_geoms, footprint_crs
+    return warehouse_geoms, non_warehouse_geoms, all_building_geoms, footprint_crs
 
 
 def _filter_to_val_coverage(
     warehouse_geoms: list,
     non_warehouse_geoms: list,
+    all_building_geoms: list,
     val_paths: list[Path],
-) -> tuple[list, list, dict]:
+) -> tuple[list, list, list, dict]:
     """Restrict footprint geometries to those intersecting the val patch area.
 
     Prevents train-area footprints from inflating false-negative counts.
     Reads only GeoTIFF headers (no pixel data).
 
-    Returns (warehouse_geoms, non_warehouse_geoms, tile_crs_map) where
+    Returns (warehouse_geoms, non_warehouse_geoms, all_building_geoms, tile_crs_map) where
     tile_crs_map maps tile stem → rasterio CRS, used for detection reprojection.
     """
     bboxes: list = []
@@ -83,7 +88,7 @@ def _filter_to_val_coverage(
             tile_crs_map[p.stem] = src.crs
 
     if not bboxes:
-        return warehouse_geoms, non_warehouse_geoms, tile_crs_map
+        return warehouse_geoms, non_warehouse_geoms, all_building_geoms, tile_crs_map
 
     coverage_tree = STRtree(bboxes)
 
@@ -92,11 +97,13 @@ def _filter_to_val_coverage(
 
     wh_in_val = _in_val(warehouse_geoms)
     nwh_in_val = _in_val(non_warehouse_geoms)
+    all_in_val = _in_val(all_building_geoms)
     print(
         f"  Within val coverage: {len(wh_in_val):,} warehouse, "
-        f"{len(nwh_in_val):,} non_warehouse"
+        f"{len(nwh_in_val):,} non_warehouse, "
+        f"{len(all_in_val):,} total buildings"
     )
-    return wh_in_val, nwh_in_val, tile_crs_map
+    return wh_in_val, nwh_in_val, all_in_val, tile_crs_map
 
 
 def _reproject_detections(detections: list, tile_crs_map: dict, dst_crs: str) -> list:
@@ -176,6 +183,13 @@ def main() -> None:
     parser.add_argument("--save-detections", type=Path, default=None, metavar="FILE",
                         help="Path for the GeoParquet of inference results "
                              "(default: <workspace>/eval_detections.parquet).")
+    parser.add_argument(
+        "--ignore-vacant",
+        action="store_true",
+        default=False,
+        help="Detections over areas with no building footprint "
+             "(MSFT + OSM) are ignored rather than counted as false positives.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -201,11 +215,11 @@ def main() -> None:
     print(f"IoU thresh : {args.iou_threshold}  confidence: {args.confidence}\n")
 
     print("Loading footprints …")
-    warehouse_geoms, non_warehouse_geoms, footprint_crs = _load_footprints(config.workspace)
+    warehouse_geoms, non_warehouse_geoms, all_building_geoms, footprint_crs = _load_footprints(config.workspace)
 
     print("Filtering to val coverage …")
-    warehouse_geoms, non_warehouse_geoms, tile_crs_map = _filter_to_val_coverage(
-        warehouse_geoms, non_warehouse_geoms, val_paths
+    warehouse_geoms, non_warehouse_geoms, all_building_geoms, tile_crs_map = _filter_to_val_coverage(
+        warehouse_geoms, non_warehouse_geoms, all_building_geoms, val_paths
     )
     _save_val_footprints(warehouse_geoms, non_warehouse_geoms, footprint_crs,
                          config.workspace / "eval_footprints.parquet")
@@ -238,6 +252,7 @@ def main() -> None:
         warehouse_geoms,
         non_warehouse_geoms,
         iou_threshold=args.iou_threshold,
+        all_building_geoms=None if args.ignore_vacant else all_building_geoms,
     )
 
     metrics = binary_metrics(tp, fp, fn)

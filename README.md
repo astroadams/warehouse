@@ -110,12 +110,12 @@ YOLO's built-in validation metrics count any detection without a matching label
 file as a false positive. Because OSM coverage is incomplete, real warehouses that
 lack OSM tags produce empty label files — making the built-in numbers misleading.
 
-The footprint-anchored evaluation scores predictions only at known footprint
-locations:
+The footprint-anchored evaluation scores predictions against the combined MSFT +
+OSM building footprint dataset:
 
 - **TP** — detection whose IoU with a labeled warehouse footprint ≥ threshold
-- **FP** — detection that overlaps a confirmed non-warehouse footprint
-- **ignored** — detection in a region with no labeled footprint (excluded from both precision and recall)
+- **FP** — detection that overlaps a confirmed non-warehouse footprint, or a detection in an area where no building exists in the combined MSFT + OSM dataset
+- **ignored** — detection that overlaps a building footprint whose type is uncertain (ambiguous label or warehouse overlap below the IoU threshold)
 - **FN** — labeled warehouse footprint in the val coverage area not matched by any detection
 
 ```bash
@@ -129,6 +129,7 @@ Key options:
 | `--checkpoint PATH` | `<workspace>/training/runs/warehouse_seg/weights/best.pt` | Model weights |
 | `--iou-threshold T` | `0.5` | Minimum IoU to count a detection as a TP |
 | `--confidence C` | `0.25` | Detector confidence threshold |
+| `--ignore-vacant` | off | Revert to legacy behavior: detections over building-free areas are ignored rather than counted as FP |
 
 Example output:
 
@@ -146,10 +147,10 @@ Footprint-anchored evaluation
 ────────────────────────────────────────────
 ```
 
-Precision is optimistic (detections in unlabeled regions aren't penalized) while
-recall is meaningful — every known warehouse in the val area that the model misses
-counts as a false negative. Compare both the footprint-anchored F1 and the YOLO
-mAP from `results.csv` to get a full picture.
+Both precision and recall are meaningful against the combined footprint dataset.
+Compare the footprint-anchored F1 with the YOLO mAP from `results.csv` to get a
+full picture. Pass `--ignore-vacant` if footprint coverage in the target area is
+known to be sparse.
 
 ### Experiment tracking
 

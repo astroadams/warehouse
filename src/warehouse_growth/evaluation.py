@@ -42,18 +42,25 @@ def match_detections_to_footprints(
     warehouse_geoms: list,
     non_warehouse_geoms: list,
     iou_threshold: float = 0.5,
+    all_building_geoms: list | None = None,
 ) -> tuple[int, int, int, int]:
     """Match predicted detections against labeled footprint geometries.
 
     Returns (tp, fp, fn, ignored) where:
     - TP: detection whose best IoU with a labeled warehouse ≥ iou_threshold
-    - FP: detection that overlaps a labeled non-warehouse (but not a warehouse)
+    - FP: detection that overlaps a labeled non-warehouse, OR (when all_building_geoms
+          is provided) a detection with no intersection with any known building at all
     - FN: labeled warehouse footprints in the evaluation area not matched
-    - ignored: detections that don't overlap any labeled footprint
+    - ignored: detections that don't overlap any labeled footprint (or overlap only an
+               ambiguous/low-confidence building when all_building_geoms is provided)
 
     Each warehouse footprint is matched at most once (greedy). Detections in
     regions with no labeled footprint are excluded from both precision and recall,
     which makes this suitable for datasets with incomplete OSM coverage.
+
+    When all_building_geoms is provided (union of all MSFT + OSM footprints, all label
+    types), detections over areas confirmed to have no building are counted as FP rather
+    than ignored — this ensures the model is penalized for spurious detections.
 
     All geometries must share the same CRS (typically EPSG:4326).
     """
@@ -64,6 +71,7 @@ def match_detections_to_footprints(
 
     wh_tree = STRtree(warehouse_geoms) if warehouse_geoms else None
     nwh_tree = STRtree(non_warehouse_geoms) if non_warehouse_geoms else None
+    bldg_tree = STRtree(all_building_geoms) if all_building_geoms else None
 
     matched_wh: set[int] = set()
     tp = fp = ignored = 0
@@ -91,6 +99,8 @@ def match_detections_to_footprints(
             tp += 1
             matched_wh.add(best_idx)
         elif nwh_tree is not None and len(nwh_tree.query(geom, predicate="intersects")) > 0:
+            fp += 1
+        elif bldg_tree is not None and len(bldg_tree.query(geom, predicate="intersects")) == 0:
             fp += 1
         else:
             ignored += 1
