@@ -1,3 +1,5 @@
+CLAUDE.md
+
 # Python
 __pycache__/
 *.py[cod]
@@ -48,6 +50,9 @@ htmlcov/
 
 # Experiment runs (downloaded imagery, derived data, YOLO outputs)
 runs/
+
+# Experiment configs
+configs/
 
 # macOS
 .DS_Store
