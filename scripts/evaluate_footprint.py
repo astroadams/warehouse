@@ -23,8 +23,8 @@ from pathlib import Path
 
 import geopandas as gpd
 import rasterio
-from rasterio.warp import transform_bounds
-from shapely.geometry import box
+from rasterio.warp import transform_bounds, transform_geom as _warp_geom
+from shapely.geometry import box, shape
 from shapely.strtree import STRtree
 from tqdm import tqdm
 
@@ -32,8 +32,11 @@ from warehouse_growth.config import load_config
 from warehouse_growth.evaluation import binary_metrics, match_detections_to_footprints
 
 
-def _load_footprints(workspace: Path) -> tuple[list, list]:
-    """Load and combine labeled footprints from all epochs, split by label."""
+def _load_footprints(workspace: Path) -> tuple[list, list, str]:
+    """Load and combine labeled footprints from all epochs, split by label.
+
+    Returns (warehouse_geoms, non_warehouse_geoms, crs_string).
+    """
     parquets = sorted(workspace.glob("labeled_footprints_*.parquet"))
     if not parquets:
         raise FileNotFoundError(
@@ -44,34 +47,43 @@ def _load_footprints(workspace: Path) -> tuple[list, list]:
     frames = [gpd.read_parquet(p) for p in parquets]
     gdf = gpd.pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
 
+    epsg = gdf.crs.to_epsg()
+    footprint_crs = f"EPSG:{epsg}" if epsg else gdf.crs.to_wkt()
+
     warehouse_geoms = gdf[gdf["label"] == "warehouse"].geometry.tolist()
     non_warehouse_geoms = gdf[gdf["label"] == "non_warehouse"].geometry.tolist()
     print(
         f"  Loaded footprints: {len(warehouse_geoms):,} warehouse, "
         f"{len(non_warehouse_geoms):,} non_warehouse "
         f"(from {len(parquets)} epoch file{'s' if len(parquets) != 1 else ''})"
+        f" — CRS: {footprint_crs}"
     )
-    return warehouse_geoms, non_warehouse_geoms
+    return warehouse_geoms, non_warehouse_geoms, footprint_crs
 
 
 def _filter_to_val_coverage(
     warehouse_geoms: list,
     non_warehouse_geoms: list,
     val_paths: list[Path],
-) -> tuple[list, list]:
+) -> tuple[list, list, dict]:
     """Restrict footprint geometries to those intersecting the val patch area.
 
     Prevents train-area footprints from inflating false-negative counts.
     Reads only GeoTIFF headers (no pixel data).
+
+    Returns (warehouse_geoms, non_warehouse_geoms, tile_crs_map) where
+    tile_crs_map maps tile stem → rasterio CRS, used for detection reprojection.
     """
     bboxes: list = []
+    tile_crs_map: dict = {}
     for p in val_paths:
         with rasterio.open(p) as src:
             b4326 = transform_bounds(src.crs, "EPSG:4326", *src.bounds)
             bboxes.append(box(*b4326))
+            tile_crs_map[p.stem] = src.crs
 
     if not bboxes:
-        return warehouse_geoms, non_warehouse_geoms
+        return warehouse_geoms, non_warehouse_geoms, tile_crs_map
 
     coverage_tree = STRtree(bboxes)
 
@@ -84,7 +96,68 @@ def _filter_to_val_coverage(
         f"  Within val coverage: {len(wh_in_val):,} warehouse, "
         f"{len(nwh_in_val):,} non_warehouse"
     )
-    return wh_in_val, nwh_in_val
+    return wh_in_val, nwh_in_val, tile_crs_map
+
+
+def _reproject_detections(detections: list, tile_crs_map: dict, dst_crs: str) -> list:
+    """Reproject detection geometries from each tile's native CRS to dst_crs."""
+    from warehouse_growth.models.base import Detection
+
+    out = []
+    for det in detections:
+        src_crs = tile_crs_map.get(det.tile_id)
+        if src_crs is None:
+            continue
+        try:
+            warped = _warp_geom(src_crs, dst_crs, det.geometry.__geo_interface__)
+            geom = shape(warped)
+            if not geom.is_valid:
+                geom = geom.buffer(0)
+            out.append(Detection(geometry=geom, score=det.score,
+                                 class_name=det.class_name, tile_id=det.tile_id))
+        except Exception:
+            pass
+    return out
+
+
+def _save_val_footprints(
+    warehouse_geoms: list,
+    non_warehouse_geoms: list,
+    footprint_crs: str,
+    path: Path,
+) -> None:
+    """Save the val-coverage footprint subset to GeoParquet for plot_eval_results.py."""
+    labels = ["warehouse"] * len(warehouse_geoms) + ["non_warehouse"] * len(non_warehouse_geoms)
+    gdf = gpd.GeoDataFrame(
+        {"label": labels},
+        geometry=warehouse_geoms + non_warehouse_geoms,
+        crs=footprint_crs,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    gdf.to_parquet(path)
+    print(
+        f"  Val footprints saved → {path} "
+        f"({len(warehouse_geoms):,} warehouse, {len(non_warehouse_geoms):,} non_warehouse)"
+    )
+
+
+def _save_detections(detections: list, path: Path) -> None:
+    """Persist inference results to GeoParquet for use with plot_eval_results.py."""
+    if not detections:
+        print(f"  No detections to save → {path}")
+        return
+
+    gdf = gpd.GeoDataFrame(
+        {
+            "score": [d.score for d in detections],
+            "class_name": [d.class_name for d in detections],
+            "tile_id": [d.tile_id for d in detections],
+        },
+        geometry=[d.geometry for d in detections],
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    gdf.to_parquet(path)
+    print(f"  Detections saved → {path}")
 
 
 def main() -> None:
@@ -100,6 +173,9 @@ def main() -> None:
                         help="IoU threshold for TP matching (default: 0.5)")
     parser.add_argument("--confidence", type=float, default=0.25, metavar="C",
                         help="Detector confidence threshold (default: 0.25)")
+    parser.add_argument("--save-detections", type=Path, default=None, metavar="FILE",
+                        help="Path for the GeoParquet of inference results "
+                             "(default: <workspace>/eval_detections.parquet).")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -125,12 +201,14 @@ def main() -> None:
     print(f"IoU thresh : {args.iou_threshold}  confidence: {args.confidence}\n")
 
     print("Loading footprints …")
-    warehouse_geoms, non_warehouse_geoms = _load_footprints(config.workspace)
+    warehouse_geoms, non_warehouse_geoms, footprint_crs = _load_footprints(config.workspace)
 
     print("Filtering to val coverage …")
-    warehouse_geoms, non_warehouse_geoms = _filter_to_val_coverage(
+    warehouse_geoms, non_warehouse_geoms, tile_crs_map = _filter_to_val_coverage(
         warehouse_geoms, non_warehouse_geoms, val_paths
     )
+    _save_val_footprints(warehouse_geoms, non_warehouse_geoms, footprint_crs,
+                         config.workspace / "eval_footprints.parquet")
 
     print("\nLoading model …")
     from warehouse_growth.models.yolo import YoloBuildingDetector
@@ -146,6 +224,13 @@ def main() -> None:
             tqdm.write(f"  SKIP {patch_path.name}: {exc}")
 
     print(f"\nTotal detections: {len(all_detections)}")
+
+    print("Reprojecting detections to footprint CRS …")
+    all_detections = _reproject_detections(all_detections, tile_crs_map, footprint_crs)
+    print(f"  {len(all_detections)} detections after reprojection")
+
+    det_parquet = args.save_detections or (config.workspace / "eval_detections.parquet")
+    _save_detections(all_detections, det_parquet)
 
     print("Matching detections to footprints …")
     tp, fp, fn, ignored = match_detections_to_footprints(

@@ -77,8 +77,11 @@ def match_detections_to_footprints(
             hit_idxs = wh_tree.query(geom, predicate="intersects").tolist()
             for idx in hit_idxs:
                 wh_geom = warehouse_geoms[idx]
-                inter = geom.intersection(wh_geom).area
-                union = geom.union(wh_geom).area
+                try:
+                    inter = geom.intersection(wh_geom).area
+                    union = geom.union(wh_geom).area
+                except Exception:
+                    continue
                 iou = inter / union if union > 0 else 0.0
                 if iou > best_iou:
                     best_iou = iou
