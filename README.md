@@ -1,7 +1,6 @@
-# Warehouse Growth Detector
+# Warehouse Detector
 
-Detects warehouse buildings in NAIP satellite imagery and measures warehouse
-growth across time. The current prototype covers the Reno-Sparks, NV logistics
+Detects warehouse buildings in NAIP satellite imagery and measures the proliferation of warehouses over time. The current prototype covers the Reno-Sparks, NV logistics
 corridor using Microsoft building footprints, OSM tags, and a fine-tuned YOLOv8
 segmentation model.
 
