@@ -37,6 +37,7 @@ class TilingConfig:
     tile_size_px: int = 1024
     stride_px: int = 768
     resolution_meters: float = 0.5
+    cache_tiles: bool = True
 
 
 @dataclass(frozen=True)

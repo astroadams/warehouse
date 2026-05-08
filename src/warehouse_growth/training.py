@@ -157,19 +157,24 @@ def process_tile_task(task: dict) -> dict:
     raw_path = raw_tile_dir / f"{tile_name}.tif"
     result: dict = {"tile_name": tile_name, "split": split, "pos": 0, "neg": 0, "error": None}
 
-    if not raw_path.exists():
-        try:
-            download_naip_tile(pc.sign(uri), raw_path)
-        except Exception as exc:
-            result["error"] = str(exc)
-            return result
+    cache_tiles: bool = task.get("cache_tiles", True)
 
     try:
-        with rasterio.open(raw_path) as src:
-            tile_crs = src.crs
-            tile_transform = src.transform
-            tile_w, tile_h = src.width, src.height
-            img_full = src.read([1, 2, 3])
+        if cache_tiles:
+            if not raw_path.exists():
+                download_naip_tile(pc.sign(uri), raw_path)
+            with rasterio.open(raw_path) as src:
+                tile_crs = src.crs
+                tile_transform = src.transform
+                tile_w, tile_h = src.width, src.height
+                img_full = src.read([1, 2, 3])
+        else:
+            with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"):
+                with rasterio.open(pc.sign(uri)) as src:
+                    tile_crs = src.crs
+                    tile_transform = src.transform
+                    tile_w, tile_h = src.width, src.height
+                    img_full = src.read([1, 2, 3])
     except Exception as exc:
         result["error"] = str(exc)
         return result

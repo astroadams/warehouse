@@ -111,6 +111,7 @@ def _process_epoch(
             "neg_sample_rate": NEG_SAMPLE_RATE,
             "warehouse_class_id": WAREHOUSE_CLASS_ID,
             "road_mask_wkt": road_mask_wkt,
+            "cache_tiles": config.tiling.cache_tiles,
         }
         for rank, asset in enumerate(shuffled)
     ]

@@ -10,7 +10,7 @@ in place.
 
 ---
 
-## 1. Support both tile caching and COG streaming
+## 1. Support both tile caching and COG streaming ✓ Implemented
 
 **Current behavior:** `download_naip_tile` in `training.py` always downloads the
 full NAIP GeoTIFF (~212 MB) before slicing. At state scale this produces ~2.4 TB
@@ -35,42 +35,27 @@ With N parallel workers all streaming simultaneously, that pressure is multiplie
 Streaming only wins on total bytes when the road mask is sparse enough that you
 skip a large fraction of each tile.
 
-**Change:** Add a `cache_tiles: bool` flag to `TilingConfig` (default `True`).
-The existing `raw_tiles/` directory and the `if not raw_path.exists()` skip logic
-in `process_tile_task` already provide the caching mechanism. The streaming path
-only requires opening the remote URI directly in rasterio:
+**Implemented:** `cache_tiles: bool = True` was added to `TilingConfig` in
+`config.py`. `process_tile_task` in `training.py` branches on this flag:
+the cache path (default) downloads the full GeoTIFF to `raw_tiles/` on first
+use and re-reads it on subsequent runs; the streaming path opens the signed
+remote COG URI directly in rasterio with no local file written. The flag is
+threaded into each worker's task dict by `prepare_training_data.py`.
 
-```python
-if config.tiling.cache_tiles:
-    # existing path: download once, read from local disk
-    if not raw_path.exists():
-        download_naip_tile(pc.sign(uri), raw_path)
-    with rasterio.open(raw_path) as src:
-        img_full = src.read([1, 2, 3])
-else:
-    # streaming path: open remote COG, read all windows, no local file written
-    with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"):
-        with rasterio.open(pc.sign(uri)) as src:
-            img_full = src.read([1, 2, 3])
+To enable streaming, add to your config:
+
+```json
+"tiling": { "cache_tiles": false }
 ```
-
-This keeps the `raw_tiles/` cache intact for iterative development (change
-annotation logic → delete `images/` and `labels/` → re-run without re-downloading)
-while making streaming available for first-pass large-scale runs. Running on Azure
-compute (Azure ML) against Planetary Computer eliminates egress costs entirely when
-streaming.
 
 ---
 
-## 2. Parallelize tile processing with a worker pool
+## 2. Parallelize tile processing with a worker pool ✓ Implemented
 
-**Current behavior:** Tile download, slicing, and inference all run in a single
-thread. The tile loop in `prepare_training_data.py` and the predict loop are
-sequential over `TileWindow` objects.
-
-**Change:** Each `TileWindow` is an independent unit of work with no shared state.
-Wrap the inner loop with `concurrent.futures.ProcessPoolExecutor`. For inference,
-each worker calls `YoloBuildingDetector.predict_tile` on its assigned window.
+Each `TileWindow` is an independent unit of work with no shared state.
+`prepare_training_data.py` now wraps the inner tile loop with
+`concurrent.futures.ProcessPoolExecutor`, where each worker calls
+`YoloBuildingDetector.predict_tile` on its assigned window:
 
 ```python
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -219,15 +204,14 @@ set.
 
 | Change | Eliminates | Effort |
 |---|---|---|
-| Tile caching + COG streaming | 2.4 TB/state storage (streaming path) | Low |
+| Tile caching + COG streaming | 2.4 TB/state storage (streaming path) | Low — **implemented** |
 | Worker pool | Sequential tile bottleneck | Low — **implemented** |
 | DuckDB spatial join | OOM on large footprint sets | Medium |
 | WebDataset shards | Inode limits, distributed training barrier | Medium |
 | fsspec path abstraction | Local-disk-only outputs | Medium |
 | Geographic partitioning | Single-machine AOI limit | Low |
 
-The highest-leverage first step is the **worker pool** (already implemented)
-combined with **COG streaming for first-pass state runs**: together they remove
-the sequential bottleneck and avoid intermediate storage costs, with no changes
-to the core labeling or model code. Keep the download cache as the default for
-iterative development workflows.
+The **worker pool** and **COG streaming** are both implemented. Together they
+remove the sequential bottleneck and avoid intermediate storage costs, with no
+changes to the core labeling or model code. The download cache remains the
+default for iterative development workflows.
