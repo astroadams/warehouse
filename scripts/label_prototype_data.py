@@ -20,6 +20,7 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 
+from warehouse_growth import provenance
 from warehouse_growth.config import load_config
 from warehouse_growth.data_sources import VectorFeature
 from warehouse_growth.labels import BuildingLabel, filter_trainable_labels, label_footprints
@@ -91,9 +92,11 @@ def main(config_path: Path) -> None:
     for epoch in config.epochs:
         output_path = workspace / f"labeled_footprints_{epoch.name}.parquet"
         if output_path.exists():
+            provenance.check(output_path)
             print(f"  {output_path.name} already exists — skipping")
             continue
         base_gdf.to_parquet(output_path)
+        provenance.write(output_path, config_path, epoch=epoch.name)
         print(f"  Saved → {output_path.name}")
 
     print("\nNext step:")

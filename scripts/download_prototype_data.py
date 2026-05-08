@@ -15,14 +15,16 @@ from pathlib import Path
 
 from shapely.geometry import box, mapping, shape
 
+from warehouse_growth import provenance
 from warehouse_growth.config import load_config
 
 
-def compute_road_mask_aoi(config, workspace: Path):
+def compute_road_mask_aoi(config, workspace: Path, config_path: Path):
     """Fetch OSM roads, build road-mask AOI, cache to road_mask_aoi.geojson."""
     cache_path = workspace / "road_mask_aoi.geojson"
     if cache_path.exists():
         print(f"[road] Using cached road-mask AOI: {cache_path.name}")
+        provenance.check(cache_path)
         with open(cache_path) as f:
             return shape(json.load(f)["geometry"])
 
@@ -34,32 +36,36 @@ def compute_road_mask_aoi(config, workspace: Path):
     mask_geom = aoi_from_road_mask(config.aoi.bbox, config.road_mask, road_source)
     with open(cache_path, "w") as f:
         json.dump({"type": "Feature", "geometry": mapping(mask_geom), "properties": {}}, f)
+    provenance.write(cache_path, config_path)
     print(f"[road] Road-mask AOI cached → {cache_path.name}\n")
     return mask_geom
 
 
-def download_msft_footprints(aoi, workspace: Path) -> None:
+def download_msft_footprints(aoi, workspace: Path, config_path: Path) -> None:
     from warehouse_growth.adapters import MicrosoftFootprintSource
 
     cache_path = workspace / "msft_buildings.parquet"
     if cache_path.exists():
         print(f"[msft] Using cached footprints: {cache_path.name}")
+        provenance.check(cache_path)
         source = MicrosoftFootprintSource(cache_path)
     else:
         print("[msft] Querying Overture Maps for building footprints …")
         source = MicrosoftFootprintSource.build_cache(aoi, cache_path)
+        provenance.write(cache_path, config_path)
 
     footprints = list(source.footprints_for_aoi(aoi))
     print(f"[msft] {len(footprints):,} building footprints in AOI\n")
 
 
-def download_osm_tags(aoi, workspace: Path) -> None:
+def download_osm_tags(aoi, workspace: Path, config_path: Path) -> None:
     import geopandas as gpd
     from warehouse_growth.adapters import OverpassTagSource
 
     cache_path = workspace / "osm_tags.parquet"
     if cache_path.exists():
         print(f"[osm]  Using cached OSM tags: {cache_path.name}")
+        provenance.check(cache_path)
         gdf = gpd.read_parquet(cache_path)
         tag_series = gdf.get("building")
     else:
@@ -72,6 +78,7 @@ def download_osm_tags(aoi, workspace: Path) -> None:
             crs="EPSG:4326",
         )
         gdf.to_parquet(cache_path)
+        provenance.write(cache_path, config_path)
         tag_series = gdf.get("building")
 
     print(f"[osm]  {len(gdf):,} building features")
@@ -109,12 +116,12 @@ def main(config_path: Path) -> None:
     print(f"Workspace: {config.workspace.resolve()}\n")
 
     if config.road_mask is not None:
-        aoi = compute_road_mask_aoi(config, config.workspace)
+        aoi = compute_road_mask_aoi(config, config.workspace, config_path)
     else:
         aoi = box(*config.aoi.bbox)
 
-    download_msft_footprints(aoi, config.workspace)
-    download_osm_tags(aoi, config.workspace)
+    download_msft_footprints(aoi, config.workspace, config_path)
+    download_osm_tags(aoi, config.workspace, config_path)
     list_naip_assets(aoi, epoch_names)
 
     print("Done.  Run the labeling step next:")

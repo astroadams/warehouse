@@ -24,6 +24,7 @@ from pathlib import Path
 
 import yaml
 
+from warehouse_growth import provenance
 from warehouse_growth.config import load_config
 
 
@@ -71,6 +72,11 @@ def main(config_paths: list[Path], output_workspace: Path) -> None:
             },
             default_flow_style=False,
         )
+    )
+    provenance.write(
+        dataset_yaml,
+        metros=[str(p) for p in config_paths],
+        n_merged=len(train_dirs),
     )
 
     print(f"\nMerged {len(train_dirs)} metro(s) → {dataset_yaml}")

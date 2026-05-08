@@ -39,6 +39,7 @@ import yaml
 from shapely.geometry import box
 from tqdm import tqdm
 
+from warehouse_growth import provenance
 from warehouse_growth.adapters import NAIPImagerySource
 from warehouse_growth.config import EpochConfig, ProjectConfig, load_config
 from warehouse_growth.training import init_patch_worker, process_tile_task
@@ -222,6 +223,12 @@ def main(config_path: Path) -> None:
         total += p + n
         print(f"  {split:5s}  {p:4d} positive  {n:4d} negative")
     print(f"  total  {total} patches")
+    provenance.write(
+        yaml_path,
+        config_path,
+        epochs=[e.name for e in config.epochs],
+        n_patches=total,
+    )
     print(f"\ndataset.yaml → {yaml_path}")
     print("Next step:")
     print("  python scripts/train_warehouse_detector.py", config.workspace)
