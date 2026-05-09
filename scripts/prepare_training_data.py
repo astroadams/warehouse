@@ -232,7 +232,7 @@ def main(config_path: Path) -> None:
     )
     print(f"\ndataset.yaml → {yaml_path}")
     print("Next step:")
-    print("  python scripts/train_warehouse_detector.py", config.workspace)
+    print("  uv run python scripts/train_warehouse_detector.py", config.workspace)
 
 
 if __name__ == "__main__":

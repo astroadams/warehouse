@@ -81,7 +81,7 @@ def main(config_paths: list[Path], output_workspace: Path) -> None:
 
     print(f"\nMerged {len(train_dirs)} metro(s) → {dataset_yaml}")
     print("Next step:")
-    print(f"  python scripts/train_warehouse_detector.py {output_workspace}")
+    print(f"  uv run python scripts/train_warehouse_detector.py {output_workspace}")
 
 
 if __name__ == "__main__":

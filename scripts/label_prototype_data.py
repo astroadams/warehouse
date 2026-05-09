@@ -97,7 +97,7 @@ def main(config_path: Path) -> None:
         print(f"[{epoch.name}] Saved → {output_path.name}\n")
 
     print("Next step:")
-    print(f"  python scripts/prepare_training_data.py {config_path}")
+    print(f"  uv run python scripts/prepare_training_data.py {config_path}")
 
 
 if __name__ == "__main__":
