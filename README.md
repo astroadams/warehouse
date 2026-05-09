@@ -75,7 +75,7 @@ Key options:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--epochs N` | 150 | Training epochs |
+| `--epochs N` | 100 | Training epochs |
 | `--model MODEL` | `yolov8n-seg.pt` | Base checkpoint (downloaded automatically) |
 | `--imgsz N` | 1024 | Input image size in pixels |
 | `--batch N` | 8 | Batch size - reduce if GPU OOM |

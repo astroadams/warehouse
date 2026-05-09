@@ -148,6 +148,15 @@ def _save_val_footprints(
     )
 
 
+def _save_val_all_buildings(all_building_geoms: list, footprint_crs: str, path: Path) -> None:
+    """Save all val-coverage buildings (all labels) so plot_eval_results.py can apply
+    the same vacant-area FP logic as evaluate_footprint.py."""
+    gdf = gpd.GeoDataFrame(geometry=all_building_geoms, crs=footprint_crs)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    gdf.to_parquet(path)
+    print(f"  All val buildings saved → {path} ({len(all_building_geoms):,} total)")
+
+
 def _save_detections(detections: list, path: Path) -> None:
     """Persist inference results to GeoParquet for use with plot_eval_results.py."""
     if not detections:
@@ -223,6 +232,8 @@ def main() -> None:
     )
     _save_val_footprints(warehouse_geoms, non_warehouse_geoms, footprint_crs,
                          config.workspace / "eval_footprints.parquet")
+    _save_val_all_buildings(all_building_geoms, footprint_crs,
+                            config.workspace / "eval_all_buildings.parquet")
 
     print("\nLoading model …")
     from warehouse_growth.models.yolo import YoloBuildingDetector

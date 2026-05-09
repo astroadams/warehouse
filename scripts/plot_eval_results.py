@@ -3,7 +3,7 @@
 
 Reads the GeoParquet of detections saved by evaluate_footprint.py and overlays
 them on each val patch image alongside green (warehouse) and red (non_warehouse)
-ground-truth footprint polygons.
+ground-truth footprint polygons. Also generates a precision-recall curve.
 
 Run evaluate_footprint.py at least once to produce the detections file before
 using this script.
@@ -21,6 +21,9 @@ Usage
     # Plot every val patch, not just those with detections or warehouse GT
     python scripts/plot_eval_results.py configs/reno_sparks_v2.json \\
         --plot-dir runs/reno_sparks_v2/eval_plots --plot-all
+
+    # Generate only the PR curve (skip per-patch images)
+    python scripts/plot_eval_results.py configs/reno_sparks_v2.json --no-patches
 """
 from __future__ import annotations
 
@@ -74,6 +77,111 @@ def _geom_to_px(geom, tile_transform):
     ys = [c[1] for c in geom.exterior.coords]
     rows, cols = _rasterio_rowcol(tile_transform, xs, ys)
     return list(zip(cols, rows))  # (x, y) for matplotlib
+
+
+def plot_pr_curve(
+    detections_path: Path,
+    footprints_path: Path,
+    iou_threshold: float,
+    output_path: Path,
+    all_buildings_path: Path | None = None,
+) -> None:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    det_gdf = gpd.read_parquet(detections_path).sort_values("score", ascending=False)
+    fp_gdf = gpd.read_parquet(footprints_path)
+
+    warehouse_geoms = fp_gdf[fp_gdf["label"] == "warehouse"].geometry.tolist()
+    non_warehouse_geoms = fp_gdf[fp_gdf["label"] == "non_warehouse"].geometry.tolist()
+    n_positives = len(warehouse_geoms)
+
+    # Load all buildings (warehouse + non_warehouse + ambiguous) to replicate the
+    # evaluate_footprint.py default of counting detections over vacant land as FP.
+    all_buildings_path = all_buildings_path or (footprints_path.parent / "eval_all_buildings.parquet")
+    if all_buildings_path.exists():
+        all_building_geoms = gpd.read_parquet(all_buildings_path).geometry.tolist()
+        bldg_tree: STRtree | None = STRtree(all_building_geoms)
+    else:
+        bldg_tree = None
+
+    print(f"  PR curve: {len(det_gdf):,} detections, {n_positives:,} warehouse footprints"
+          + ("" if bldg_tree is None else f", {len(all_building_geoms):,} total buildings"))
+
+    if n_positives == 0:
+        print("  WARNING: no warehouse footprints — skipping PR curve")
+        return
+
+    wh_tree = STRtree(warehouse_geoms) if warehouse_geoms else None
+    nwh_tree = STRtree(non_warehouse_geoms) if non_warehouse_geoms else None
+
+    matched_wh: set[int] = set()
+    # 1 = TP, 0 = FP, -1 = ignored
+    is_tp: list[int] = []
+
+    for row in det_gdf.itertuples(index=False):
+        geom = row.geometry
+        best_iou = 0.0
+        best_idx: int | None = None
+
+        if wh_tree is not None:
+            for idx in wh_tree.query(geom, predicate="intersects").tolist():
+                if idx in matched_wh:
+                    continue
+                try:
+                    inter = geom.intersection(warehouse_geoms[idx]).area
+                    union = geom.union(warehouse_geoms[idx]).area
+                except Exception:
+                    continue
+                iou = inter / union if union > 0 else 0.0
+                if iou > best_iou:
+                    best_iou = iou
+                    best_idx = idx
+
+        if best_iou >= iou_threshold and best_idx is not None:
+            matched_wh.add(best_idx)
+            is_tp.append(1)
+        elif nwh_tree is not None and len(nwh_tree.query(geom, predicate="intersects")) > 0:
+            is_tp.append(0)
+        elif bldg_tree is not None and len(bldg_tree.query(geom, predicate="intersects")) == 0:
+            is_tp.append(0)  # over confirmed-vacant land — FP, matching evaluate_footprint.py
+        else:
+            is_tp.append(-1)  # over ambiguous/unlabeled building — excluded from curve
+
+    precisions = [1.0]
+    recalls = [0.0]
+    cum_tp = cum_fp = 0
+
+    for label in is_tp:
+        if label == 1:
+            cum_tp += 1
+        elif label == 0:
+            cum_fp += 1
+        else:
+            continue
+        denom = cum_tp + cum_fp
+        precisions.append(cum_tp / denom if denom else 0.0)
+        recalls.append(cum_tp / n_positives)
+
+    p_arr = np.array(precisions)
+    r_arr = np.array(recalls)
+    ap = float(np.trapezoid(p_arr, r_arr))
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.plot(r_arr, p_arr, color="steelblue", linewidth=1.5)
+    ax.fill_between(r_arr, p_arr, alpha=0.15, color="steelblue")
+    ax.set_xlabel("Recall")
+    ax.set_ylabel("Precision")
+    ax.set_title(f"Precision–Recall  (IoU≥{iou_threshold:.2f}  AP={ap:.3f})")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1.05)
+    ax.grid(True, alpha=0.3)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  PR curve saved → {output_path}  (AP={ap:.3f})")
 
 
 def plot_val_patches(
@@ -180,6 +288,18 @@ def main() -> None:
                         help="Directory for output PNGs (default: <workspace>/eval_plots/).")
     parser.add_argument("--plot-all", action="store_true",
                         help="Plot every val patch; default skips patches with no detections or warehouse GT.")
+    parser.add_argument("--no-patches", action="store_true",
+                        help="Skip per-patch images; useful when you only want the PR curve.")
+    parser.add_argument("--iou-threshold", type=float, default=0.5, metavar="T",
+                        help="IoU threshold for TP matching used in PR curve (default: 0.5).")
+    parser.add_argument("--pr-curve", type=Path, default=None, metavar="FILE",
+                        help="Output path for the PR curve PNG "
+                             "(default: <workspace>/eval_pr_curve.png).")
+    parser.add_argument("--all-buildings", type=Path, default=None, metavar="FILE",
+                        help="GeoParquet of all val buildings from evaluate_footprint.py "
+                             "(default: <workspace>/eval_all_buildings.parquet). "
+                             "Used to count detections over vacant land as FP, matching "
+                             "evaluate_footprint.py default behavior.")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -197,30 +317,36 @@ def main() -> None:
         print("Run evaluate_footprint.py first to generate it.", file=sys.stderr)
         sys.exit(1)
 
-    plot_dir = args.plot_dir or (config.workspace / "eval_plots")
+    print("Generating PR curve …")
+    pr_curve_path = args.pr_curve or (config.workspace / "eval_pr_curve.png")
+    plot_pr_curve(det_path, fp_path, args.iou_threshold, pr_curve_path,
+                  all_buildings_path=args.all_buildings)
 
-    val_dir = config.workspace / "training" / "images" / "val"
-    val_paths = sorted(val_dir.glob("*.tif"))
-    if not val_paths:
-        print(f"ERROR: no val patches found in {val_dir}", file=sys.stderr)
-        sys.exit(1)
-    print(f"Val patches : {len(val_paths)}")
+    if not args.no_patches:
+        plot_dir = args.plot_dir or (config.workspace / "eval_plots")
 
-    print(f"Loading footprints from {fp_path} …")
-    warehouse_geoms, non_warehouse_geoms, footprint_crs = _load_footprints(fp_path)
+        val_dir = config.workspace / "training" / "images" / "val"
+        val_paths = sorted(val_dir.glob("*.tif"))
+        if not val_paths:
+            print(f"ERROR: no val patches found in {val_dir}", file=sys.stderr)
+            sys.exit(1)
+        print(f"\nVal patches : {len(val_paths)}")
 
-    print(f"Loading detections from {det_path} …")
-    detections_by_tile = _load_detections(det_path)
+        print(f"Loading footprints from {fp_path} …")
+        warehouse_geoms, non_warehouse_geoms, footprint_crs = _load_footprints(fp_path)
 
-    plot_val_patches(
-        val_paths,
-        detections_by_tile,
-        warehouse_geoms,
-        non_warehouse_geoms,
-        footprint_crs,
-        plot_dir,
-        plot_all=args.plot_all,
-    )
+        print(f"Loading detections from {det_path} …")
+        detections_by_tile = _load_detections(det_path)
+
+        plot_val_patches(
+            val_paths,
+            detections_by_tile,
+            warehouse_geoms,
+            non_warehouse_geoms,
+            footprint_crs,
+            plot_dir,
+            plot_all=args.plot_all,
+        )
 
 
 if __name__ == "__main__":

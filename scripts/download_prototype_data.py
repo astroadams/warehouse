@@ -137,7 +137,7 @@ def main(config_path: Path) -> None:
     list_naip_assets(aoi, epoch_names)
 
     print("Done.  Run the labeling step next:")
-    print(f"  python scripts/label_prototype_data.py {config_path}")
+    print(f"  uv run python scripts/label_prototype_data.py {config_path}")
 
 
 if __name__ == "__main__":
