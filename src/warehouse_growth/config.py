@@ -65,6 +65,7 @@ class ProjectConfig:
     tiling: TilingConfig = field(default_factory=TilingConfig)
     detector: DetectorConfig = field(default_factory=DetectorConfig)
     classifier: ClassifierConfig = field(default_factory=ClassifierConfig)
+    osm_epoch_filter: bool = True
 
 
 def load_config(path: str | Path) -> ProjectConfig:
@@ -97,4 +98,5 @@ def parse_config(raw: dict[str, Any]) -> ProjectConfig:
         tiling=TilingConfig(**raw.get("tiling", {})),
         detector=DetectorConfig(**raw.get("detector", {})),
         classifier=ClassifierConfig(**raw.get("classifier", {})),
+        osm_epoch_filter=raw.get("osm_epoch_filter", True),
     )

@@ -58,12 +58,16 @@ def download_msft_footprints(aoi, workspace: Path, config_path: Path) -> None:
     print(f"[msft] {len(footprints):,} building footprints in AOI\n")
 
 
-def download_osm_tags(aoi, workspace: Path, config_path: Path, epochs) -> None:
+def download_osm_tags(
+    aoi, workspace: Path, config_path: Path, epochs, osm_epoch_filter: bool = True
+) -> None:
     """Download a per-epoch OSM tag snapshot for each epoch in the config.
 
-    Each epoch gets its own ``osm_tags_{epoch.name}.parquet`` queried with the
-    Overpass [date:...] setting so tags reflect OSM state at the epoch's end_date.
-    An epoch whose cache file already exists is skipped.
+    Each epoch gets its own ``osm_tags_{epoch.name}.parquet``.  When
+    *osm_epoch_filter* is True the Overpass [date:...] setting is used so
+    tags reflect OSM state at the epoch's end_date; when False, the current
+    live OSM state is returned instead.  Epochs whose cache file already
+    exists are skipped.
     """
     import geopandas as gpd
     from warehouse_growth.adapters import OverpassTagSource
@@ -77,8 +81,10 @@ def download_osm_tags(aoi, workspace: Path, config_path: Path, epochs) -> None:
             provenance.check(cache_path)
             gdf = gpd.read_parquet(cache_path)
         else:
-            print(f"[osm]  Querying Overpass API for buildings at {epoch.end_date} (epoch {epoch.name}) …")
-            tag_list = list(source.tags_for_aoi(aoi, as_of_date=epoch.end_date))
+            as_of = epoch.end_date if osm_epoch_filter else None
+            date_label = f"at {epoch.end_date}" if as_of else "current state"
+            print(f"[osm]  Querying Overpass API for buildings ({date_label}, epoch {epoch.name}) …")
+            tag_list = list(source.tags_for_aoi(aoi, as_of_date=as_of))
             gdf = gpd.GeoDataFrame(
                 [{"geometry": t.geometry, **t.properties} for t in tag_list],
                 crs="EPSG:4326",
@@ -127,7 +133,7 @@ def main(config_path: Path) -> None:
         aoi = box(*config.aoi.bbox)
 
     download_msft_footprints(aoi, config.workspace, config_path)
-    download_osm_tags(aoi, config.workspace, config_path, config.epochs)
+    download_osm_tags(aoi, config.workspace, config_path, config.epochs, config.osm_epoch_filter)
     list_naip_assets(aoi, epoch_names)
 
     print("Done.  Run the labeling step next:")
