@@ -53,6 +53,7 @@ class ClassifierConfig:
     enabled: bool = True
     checkpoint: str | None = None
     threshold: float = 0.5
+    padding_px: int = 32
 
 
 @dataclass(frozen=True)

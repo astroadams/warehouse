@@ -28,8 +28,9 @@ Commit the generated `uv.lock` to the repo for reproducible installs.
 
 ## Training Pipeline
 
-The full pipeline runs in six steps. Scripts 1–3 and 6 take a config file path;
-the trainer (step 4) takes a workspace directory.
+The full pipeline runs in eight steps. Scripts 1–3 and 6–8 take a config file
+path; the trainers (steps 4 and 6) take a workspace directory or config path
+respectively.
 
 ### 1. Download source data
 
@@ -90,7 +91,61 @@ uv run python scripts/train_warehouse_detector.py runs/reno_sparks_demo --resume
 
 The best checkpoint is saved to `<workspace>/training/runs/warehouse_seg/weights/best.pt`.
 
-### 5. Plot loss curves
+### 5. Extract footprint crops
+
+Cuts a padded square JPEG crop from the raw NAIP tile for every labeled footprint
+(`warehouse` and `non_warehouse` — ambiguous footprints are skipped). Crops are
+written to `training/crops/{train|val}/{label}/` in the same train/val split as
+the YOLO patch dataset.
+
+```bash
+uv run python scripts/extract_footprint_crops.py configs/reno_sparks_demo.json
+```
+
+Key options:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--padding PX` | `32` | Pixel padding around the footprint bounding box |
+| `--epoch NAME` | all epochs | Restrict to a single epoch's footprints |
+
+If you retrain the detector with a different split (e.g., new tiles), delete
+`training/crops/` and re-run so the classifier's train/val split stays consistent.
+
+### 6. Train the warehouse classifier
+
+Trains a YOLO classify model on the footprint crops as a second-stage filter.
+The classifier learns to distinguish warehouses from other building types using
+the localized footprint crop rather than a full 1024×1024 tile.
+
+```bash
+uv run python scripts/train_footprint_classifier.py configs/reno_sparks_demo.json
+```
+
+Key options:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--epochs N` | 50 | Training epochs |
+| `--model MODEL` | `yolov8n-cls.pt` | Base classify checkpoint (downloaded automatically) |
+| `--imgsz N` | 224 | Input image size — smaller than the detector since crops are tight |
+| `--batch N` | 32 | Batch size |
+| `--device DEVICE` | auto | `0` for GPU, `cpu`, `mps` for Apple Silicon |
+
+The best checkpoint is saved to `<workspace>/training/runs/warehouse_cls/weights/best.pt`.
+The script prints the exact config JSON snippet to add when training finishes:
+
+```json
+"classifier": {
+  "enabled": true,
+  "checkpoint": "runs/reno_sparks_demo/training/runs/warehouse_cls/weights/best.pt",
+  "threshold": 0.5
+}
+```
+
+Add this to your project config, then re-run evaluation to compare metrics.
+
+### 7. Plot loss curves
 
 After training starts, generate a training vs validation loss plot to check for overfitting:
 
@@ -103,7 +158,7 @@ uv run python scripts/plot_loss_curves.py path/to/results.csv    # direct CSV pa
 The plot is saved as `loss_curves.png` alongside `results.csv` in the run directory.
 Re-run it at any point during training to see the latest epochs.
 
-### 6. Evaluate with footprint-anchored metrics
+### 8. Evaluate with footprint-anchored metrics
 
 YOLO's built-in validation metrics count any detection without a matching label
 file as a false positive. Because OSM coverage is incomplete, real warehouses that
@@ -121,11 +176,21 @@ OSM building footprint dataset:
 uv run python scripts/evaluate_footprint.py configs/reno_sparks_demo.json
 ```
 
+When `classifier.enabled` is `true` and `classifier.checkpoint` is set in the
+config, a second-stage YOLO classify model is applied automatically between
+detection and reprojection. The output line shows how many detections were
+filtered:
+
+```
+Applying warehouse classifier …
+  87 → 71 detections (filtered 16 non-warehouses)
+```
+
 Key options:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--checkpoint PATH` | `<workspace>/training/runs/warehouse_seg/weights/best.pt` | Model weights |
+| `--checkpoint PATH` | `<workspace>/training/runs/warehouse_seg/weights/best.pt` | Detector weights |
 | `--iou-threshold T` | `0.5` | Minimum IoU to count a detection as a TP |
 | `--confidence C` | `0.25` | Detector confidence threshold |
 | `--ignore-vacant` | off | Revert to legacy behavior: detections over building-free areas are ignored rather than counted as FP |
@@ -171,6 +236,8 @@ scripts/                        End-to-end pipeline scripts
   label_prototype_data.py       Assign warehouse labels via OSM spatial join
   prepare_training_data.py      Slice NAIP tiles into YOLO-format patches
   train_warehouse_detector.py   Fine-tune YOLOv8 segmentation model
+  extract_footprint_crops.py    Cut padded JPEG crops per labeled footprint
+  train_footprint_classifier.py Fine-tune YOLO classify model on footprint crops
   plot_loss_curves.py           Plot training vs validation losses from results.csv
   evaluate_footprint.py         Footprint-anchored precision/recall over the val set
 src/warehouse_growth/           Python package
@@ -188,8 +255,9 @@ src/warehouse_growth/           Python package
     msft_footprints.py          Microsoft building footprints
     osm.py                      OpenStreetMap tag fetching
   models/                       Detector/classifier wrappers
-    base.py                     Abstract detector interface
-    yolo.py                     YOLOv8 segmentation wrapper
+    base.py                     Abstract detector/classifier interfaces
+    yolo.py                     YOLOv8 segmentation detector
+    yolo_classifier.py          YOLOv8 classify second-stage warehouse filter
 tests/                          Fast unit tests for core geometry/config logic
 ```
 
@@ -199,7 +267,7 @@ tests/                          Fast unit tests for core geometry/config logic
 - [x] YOLO segmentation training pipeline with MLflow experiment tracking
 - [x] Checkpoint resume support
 - [x] Footprint-anchored evaluation metrics (precision/recall over known footprint locations)
-- [ ] Warehouse classifier over detected footprints and contextual features
+- [x] Two-stage classifier — YOLO classify model trained on labeled footprint crops, applied as a post-detection filter in `evaluate_footprint.py`
 - [ ] Multi-epoch change detection (cross-epoch footprint matching)
 - [ ] Road-mask recall evaluation before applying mask at larger scale
 - [ ] Cloud-native raster and GeoParquet readers for state-scale runs

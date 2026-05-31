@@ -250,6 +250,26 @@ def main() -> None:
 
     print(f"\nTotal detections: {len(all_detections)}")
 
+    if config.classifier.enabled and config.classifier.checkpoint:
+        classifier_ckpt = Path(config.classifier.checkpoint)
+        if not classifier_ckpt.exists():
+            print(f"WARNING: classifier checkpoint not found at {classifier_ckpt} — skipping")
+        else:
+            print("Applying warehouse classifier …")
+            from warehouse_growth.models.yolo_classifier import YoloWarehouseClassifier
+            classifier = YoloWarehouseClassifier(
+                checkpoint=classifier_ckpt,
+                tile_dir=val_dir,
+                padding_px=config.classifier.padding_px,
+                threshold=config.classifier.threshold,
+            )
+            before = len(all_detections)
+            all_detections = classifier.predict(all_detections)
+            print(
+                f"  {before} → {len(all_detections)} detections "
+                f"(filtered {before - len(all_detections)} non-warehouses)"
+            )
+
     print("Reprojecting detections to footprint CRS …")
     all_detections = _reproject_detections(all_detections, tile_crs_map, footprint_crs)
     print(f"  {len(all_detections)} detections after reprojection")
