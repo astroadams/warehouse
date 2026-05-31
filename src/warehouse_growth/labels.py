@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
 
 from shapely.strtree import STRtree
@@ -101,3 +102,104 @@ def label_footprints(
 def filter_trainable_labels(instances: list[BuildingInstance]) -> list[BuildingInstance]:
     """Drop ambiguous instances from binary warehouse training sets."""
     return [item for item in instances if item.label is not BuildingLabel.AMBIGUOUS]
+
+
+def label_footprints_duckdb(
+    footprints_path: Path,
+    osm_path: Path,
+    epoch: str | None = None,
+) -> list[BuildingInstance]:
+    """Assign labels to footprints by spatial join with OSM features via DuckDB.
+
+    Out-of-core alternative to ``label_footprints`` that reads GeoParquet files
+    directly without loading all geometries into Python memory. Handles ~30M
+    buildings with constant memory by pushing the spatial join into DuckDB.
+
+    Each footprint is matched to the OSM feature with the greatest overlap area.
+    Footprints with no OSM match are labelled AMBIGUOUS (building type unknown).
+    """
+    import duckdb
+    from shapely import from_wkb
+
+    con = duckdb.connect()
+    con.execute("INSTALL spatial; LOAD spatial;")
+
+    fp_str = str(footprints_path)
+    osm_str = str(osm_path)
+
+    osm_count = con.execute("SELECT COUNT(*) FROM read_parquet(?)", [osm_str]).fetchone()[0]
+
+    if osm_count == 0:
+        rows = con.execute(
+            "SELECT ST_AsWKB(geometry) AS geom FROM read_parquet(?)", [fp_str]
+        ).df()
+        print(f"  No OSM features — all {len(rows):,} footprints labelled AMBIGUOUS")
+        return [
+            BuildingInstance(
+                geometry=from_wkb(bytes(row["geom"])),
+                label=BuildingLabel.AMBIGUOUS,
+                epoch=epoch,
+            )
+            for _, row in rows.iterrows()
+        ]
+
+    fp_count = con.execute("SELECT COUNT(*) FROM read_parquet(?)", [fp_str]).fetchone()[0]
+    print(f"  Spatial join: {fp_count:,} footprints × {osm_count:,} OSM features …")
+
+    # LEFT JOIN so footprints with no OSM match produce a single NULL row.
+    # ROW_NUMBER picks the best match (highest overlap area) per footprint;
+    # NULLS LAST ensures the no-match NULL row sorts after any real matches,
+    # and as the only row for unmatched footprints it still gets rn = 1.
+    sql = """
+        WITH fp AS (
+            SELECT
+                row_number() OVER () AS _fp_idx,
+                geometry                AS _fp_geom
+            FROM read_parquet(?)
+        ),
+        osm AS (
+            SELECT
+                geometry                       AS _osm_geom,
+                COALESCE(building, '') AS building
+            FROM read_parquet(?)
+        ),
+        intersections AS (
+            SELECT
+                fp._fp_idx,
+                fp._fp_geom,
+                osm.building,
+                ST_Area(ST_Intersection(fp._fp_geom, osm._osm_geom)) AS overlap_area
+            FROM fp
+            LEFT JOIN osm ON ST_Intersects(fp._fp_geom, osm._osm_geom)
+        ),
+        ranked AS (
+            SELECT
+                _fp_idx,
+                _fp_geom,
+                building,
+                ROW_NUMBER() OVER (
+                    PARTITION BY _fp_idx
+                    ORDER BY overlap_area DESC NULLS LAST
+                ) AS rn
+            FROM intersections
+        )
+        SELECT
+            _fp_idx,
+            ST_AsWKB(_fp_geom)         AS _fp_geom_wkb,
+            COALESCE(building, '') AS building
+        FROM ranked
+        WHERE rn = 1
+        ORDER BY _fp_idx
+    """
+
+    df = con.execute(sql, [fp_str, osm_str]).df()
+    print(f"  Labelled {len(df):,} footprints")
+
+    return [
+        BuildingInstance(
+            geometry=from_wkb(bytes(row["_fp_geom_wkb"])),
+            label=label_from_osm_tags({"building": row["building"]}),
+            epoch=epoch,
+        )
+        for _, row in df.iterrows()
+    ]
