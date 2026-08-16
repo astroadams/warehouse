@@ -2,7 +2,7 @@
 """Spatial-join Microsoft footprints with OSM tags and write labeled GeoParquet.
 
 Reads the caches produced by download_prototype_data.py and runs
-label_footprints() to assign WAREHOUSE / NON_WAREHOUSE / AMBIGUOUS
+label_footprints_duckdb() to assign WAREHOUSE / NON_WAREHOUSE / AMBIGUOUS
 to each building footprint in the AOI.
 
 Each epoch uses its own OSM tag snapshot (osm_tags_{epoch}.parquet) queried at
@@ -17,25 +17,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import geopandas as gpd
-import pandas as pd
 
 from warehouse_growth import provenance
 from warehouse_growth.config import load_config
-from warehouse_growth.data_sources import VectorFeature
-from warehouse_growth.labels import BuildingLabel, filter_trainable_labels, label_footprints
-
-
-def load_features(path: Path) -> list[VectorFeature]:
-    """Load a GeoParquet file as VectorFeature objects."""
-    gdf = gpd.read_parquet(path)
-    geom_col = gdf.geometry.name
-    return [
-        VectorFeature(
-            geometry=row[geom_col],
-            properties={k: v for k, v in row.items() if k != geom_col and pd.notna(v)},
-        )
-        for row in gdf.to_dict("records")
-    ]
+from warehouse_growth.labels import BuildingLabel, filter_trainable_labels, label_footprints_duckdb
 
 
 def main(config_path: Path) -> None:
@@ -53,10 +38,6 @@ def main(config_path: Path) -> None:
     print(f"Project : {config.project_name}")
     print(f"Epochs  : {', '.join(e.name for e in config.epochs)}\n")
 
-    print(f"Loading footprints from {fp_path.name} …")
-    footprints = load_features(fp_path)
-    print(f"  {len(footprints):,} footprints\n")
-
     for epoch in config.epochs:
         output_path = workspace / f"labeled_footprints_{epoch.name}.parquet"
         if output_path.exists():
@@ -70,11 +51,8 @@ def main(config_path: Path) -> None:
                 f"Missing OSM cache — run download_prototype_data.py first: {osm_path}"
             )
 
-        print(f"[{epoch.name}] Loading OSM tags from {osm_path.name} …")
-        tags = load_features(osm_path)
-        print(f"[{epoch.name}]   {len(tags):,} OSM buildings")
-
-        instances = label_footprints(footprints, tags, epoch=epoch.name)
+        print(f"[{epoch.name}] Spatial join: {fp_path.name} × {osm_path.name} …")
+        instances = label_footprints_duckdb(fp_path, osm_path, epoch=epoch.name)
 
         counts = Counter(inst.label.value for inst in instances)
         print(f"[{epoch.name}] Label distribution:")
