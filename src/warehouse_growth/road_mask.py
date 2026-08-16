@@ -47,7 +47,7 @@ def aoi_from_road_mask(
 
     Falls back to the full bbox box if no roads are found or the mask is empty.
     """
-    from pyproj import CRS, Transformer
+    from pyproj import Transformer
     from shapely.ops import transform
 
     aoi_box = box(*bbox)
@@ -84,4 +84,3 @@ def aoi_from_road_mask(
         return aoi_box
 
     return transform(inv, mask_utm)
-

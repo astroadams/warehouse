@@ -34,7 +34,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import geopandas as gpd
-import planetary_computer as pc
 import yaml
 from shapely.geometry import box
 from tqdm import tqdm

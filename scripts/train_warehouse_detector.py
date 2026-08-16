@@ -136,10 +136,9 @@ def main() -> None:
         train_kwargs["device"] = args.device
 
     try:
-        results = model.train(**train_kwargs)
+        model.train(**train_kwargs)
     except KeyboardInterrupt:
         print("\nTraining interrupted.")
-        results = None
     finally:
         # Explicitly release GPU memory so the CUDA context doesn't linger in WSL2.
         del model
@@ -154,9 +153,9 @@ def main() -> None:
     if best_pt.exists():
         print(f"Best checkpoint → {best_pt}")
         print("\nNext step — run inference on a new tile:")
-        print(f"  from warehouse_growth.models.yolo import YoloBuildingDetector")
+        print("  from warehouse_growth.models.yolo import YoloBuildingDetector")
         print(f"  detector = YoloBuildingDetector('{best_pt}')")
-        print(f"  detections = detector.predict_tile(Path('path/to/tile.tif'))")
+        print("  detections = detector.predict_tile(Path('path/to/tile.tif'))")
     else:
         print(f"(Best checkpoint not found at expected path {best_pt}; "
               "check {output_dir}/warehouse_seg/weights/)")
