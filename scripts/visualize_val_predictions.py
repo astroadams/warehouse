@@ -28,6 +28,8 @@ def parse_args() -> argparse.Namespace:
                    help="Number of patches to show (default: 16)")
     p.add_argument("--conf", type=float, default=0.25,
                    help="Model confidence threshold (default: 0.25)")
+    p.add_argument("--run", default="warehouse_seg",
+                   help="Training run name under <workspace>/training/runs/ (default: warehouse_seg)")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--all", dest="include_negatives", action="store_true",
                    help="Include patches with no ground-truth warehouses")
@@ -100,7 +102,8 @@ def main() -> None:
 
     val_img_dir = workspace / "training" / "images" / "val"
     val_lbl_dir = workspace / "training" / "labels" / "val"
-    weights = workspace / "training" / "runs" / "warehouse_seg" / "weights" / "best.pt"
+    run_dir = workspace / "training" / "runs" / args.run
+    weights = run_dir / "weights" / "best.pt"
 
     for path, label in [(val_img_dir, "val images"), (weights, "best.pt checkpoint")]:
         if not path.exists():
@@ -187,7 +190,7 @@ def main() -> None:
     )
     plt.tight_layout(rect=[0, 0.04, 1, 0.97])
 
-    out = workspace / "training" / "runs" / "warehouse_seg" / "val_predictions.png"
+    out = run_dir / "val_predictions.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved → {out}")

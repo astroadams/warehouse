@@ -80,7 +80,25 @@ Key options:
 | `--imgsz N` | 1024 | Input image size in pixels |
 | `--batch N` | 8 | Batch size - reduce if GPU OOM |
 | `--device DEVICE` | auto | `0` for GPU, `cpu`, `mps` for Apple Silicon |
-| `--resume` | off | Resume from last saved checkpoint |
+| `--name NAME` | `warehouse_seg` | Run name; outputs go to `<workspace>/training/runs/NAME` |
+| `--workers N` | 8 | Dataloader workers - reduce if workers are killed (system RAM OOM) |
+| `--cache {ram,disk}` | off | Cache decoded images to skip TIFF decoding each epoch |
+| `--resume` | off | Resume run `NAME` from its last saved checkpoint |
+
+Training refuses to start a new run over an existing one; give each model its
+own `--name`. To compare several base models:
+
+```bash
+for m in yolov8s-seg yolov8m-seg yolo11m-seg; do
+  uv run python scripts/train_warehouse_detector.py runs/reno_sparks_demo \
+      --model $m.pt --name $m --batch 16 --workers 4
+done
+uv run python scripts/compare_runs.py runs/reno_sparks_demo
+```
+
+`compare_runs.py` prints each run's best-epoch YOLO metrics and writes
+`training/runs/run_comparison.png`. For footprint-anchored scores, run step 6
+with `--checkpoint <workspace>/training/runs/<name>/weights/best.pt`.
 
 If the run is interrupted, resume it without losing progress:
 
@@ -88,7 +106,7 @@ If the run is interrupted, resume it without losing progress:
 uv run python scripts/train_warehouse_detector.py runs/reno_sparks_demo --resume
 ```
 
-The best checkpoint is saved to `<workspace>/training/runs/warehouse_seg/weights/best.pt`.
+The best checkpoint is saved to `<workspace>/training/runs/<name>/weights/best.pt`.
 
 ### 5. Plot loss curves
 

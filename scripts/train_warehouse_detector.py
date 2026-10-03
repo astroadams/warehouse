@@ -14,12 +14,15 @@ Arguments
     --epochs N      Number of training epochs (default: 100)
     --model MODEL   Pretrained YOLO checkpoint to fine-tune from
                     (default: yolov8n-seg.pt — downloads automatically on first run)
-    --resume        Resume from the last saved checkpoint in the output directory
+    --name NAME     Run name; outputs go to <workspace>/training/runs/NAME
+                    (default: warehouse_seg). Use a distinct name per model so
+                    runs don't overwrite each other.
+    --resume        Resume from the last saved checkpoint of run NAME
 
 Outputs
 -------
-    <workspace>/training/runs/warehouse_seg/weights/best.pt   best checkpoint
-    <workspace>/training/runs/warehouse_seg/results.csv       per-epoch metrics
+    <workspace>/training/runs/<name>/weights/best.pt   best checkpoint
+    <workspace>/training/runs/<name>/results.csv       per-epoch metrics
 """
 from __future__ import annotations
 
@@ -42,8 +45,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", default=None,
                    help="Training device: 0 (GPU), cpu, mps (Apple Silicon). "
                         "Auto-detected when omitted.")
+    p.add_argument("--name", default="warehouse_seg",
+                   help="Run name; outputs go to <workspace>/training/runs/NAME "
+                        "(default: warehouse_seg).")
+    p.add_argument("--workers", type=int, default=None,
+                   help="Dataloader worker processes (Ultralytics default: 8). Each worker "
+                        "holds its own copies of mosaic images; lower this if workers are "
+                        "killed for running out of system RAM.")
+    p.add_argument("--cache", choices=["ram", "disk"], default=None,
+                   help="Cache decoded images in RAM or as .npy files on disk to skip TIFF "
+                        "decompression each epoch. 'ram' needs ~3 MB per 1024px image.")
     p.add_argument("--resume", action="store_true",
-                   help="Resume training from the last checkpoint in the output directory.")
+                   help="Resume training from the last checkpoint of run NAME.")
     return p.parse_args()
 
 
@@ -93,7 +106,8 @@ def main() -> None:
         sys.exit(1)
 
     output_dir = workspace.resolve() / "training" / "runs"
-    last_pt = output_dir / "warehouse_seg" / "weights" / "last.pt"
+    run_dir = output_dir / args.name
+    last_pt = run_dir / "weights" / "last.pt"
 
     if args.resume:
         if not last_pt.exists():
@@ -102,6 +116,10 @@ def main() -> None:
         print(f"Resuming from {last_pt}")
         model = YOLO(str(last_pt))
     else:
+        if (run_dir / "weights").exists():
+            print(f"ERROR: run '{args.name}' already exists at {run_dir}")
+            print("Pass --resume to continue it, or --name NEW_NAME to start a separate run.")
+            sys.exit(1)
         print(f"Dataset  : {dataset_yaml}")
         print(f"Base model: {args.model}")
         model = YOLO(args.model)
@@ -109,7 +127,7 @@ def main() -> None:
     print(f"Epochs   : {args.epochs}")
     print(f"Img size : {args.imgsz}")
     print(f"Batch    : {args.batch}")
-    print(f"Output   : {output_dir / 'warehouse_seg'}")
+    print(f"Output   : {run_dir}")
     print()
 
     train_kwargs: dict = dict(
@@ -118,7 +136,7 @@ def main() -> None:
         imgsz=args.imgsz,
         batch=args.batch,
         project=str(output_dir),
-        name="warehouse_seg",
+        name=args.name,
         exist_ok=True,
         resume=args.resume,
         # Augmentation — helps with the class-imbalance in aerial imagery.
@@ -134,6 +152,10 @@ def main() -> None:
     )
     if args.device is not None:
         train_kwargs["device"] = args.device
+    if args.workers is not None:
+        train_kwargs["workers"] = args.workers
+    if args.cache is not None:
+        train_kwargs["cache"] = args.cache
 
     try:
         model.train(**train_kwargs)
@@ -148,7 +170,7 @@ def main() -> None:
         except Exception:
             pass
 
-    best_pt = output_dir / "warehouse_seg" / "weights" / "best.pt"
+    best_pt = run_dir / "weights" / "best.pt"
     print("\nTraining complete.")
     if best_pt.exists():
         print(f"Best checkpoint → {best_pt}")
@@ -158,7 +180,7 @@ def main() -> None:
         print("  detections = detector.predict_tile(Path('path/to/tile.tif'))")
     else:
         print(f"(Best checkpoint not found at expected path {best_pt}; "
-              "check {output_dir}/warehouse_seg/weights/)")
+              f"check {run_dir}/weights/)")
 
 
 if __name__ == "__main__":
