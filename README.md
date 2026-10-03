@@ -151,6 +151,27 @@ Compare the footprint-anchored F1 with the YOLO mAP from `results.csv` to get a
 full picture. Pass `--ignore-vacant` if footprint coverage in the target area is
 known to be sparse.
 
+### 7. Visualize validation predictions
+
+Renders a grid of validation patches with ground-truth warehouse outlines in
+green and model predictions in red, so you can spot-check quality beyond the
+loss curves.
+
+```bash
+uv run python scripts/visualize_val_predictions.py                       # defaults
+uv run python scripts/visualize_val_predictions.py runs/my_run           # different workspace
+uv run python scripts/visualize_val_predictions.py runs/my_run --patches 24
+uv run python scripts/visualize_val_predictions.py runs/my_run --all     # include negatives
+uv run python scripts/visualize_val_predictions.py runs/my_run --conf 0.4
+```
+
+Requires a trained checkpoint at `<workspace>/training/runs/warehouse_seg/weights/best.pt`.
+By default it samples 16 positive (contains a warehouse) validation patches;
+pass `--all` to include patches with no ground-truth warehouses, `--conf` to
+change the prediction confidence threshold, or `--cols` to change the grid
+layout. The figure is saved to
+`<workspace>/training/runs/warehouse_seg/val_predictions.png`.
+
 ### Experiment tracking
 
 MLflow is enabled automatically when the `models` extra is installed. After
@@ -173,6 +194,7 @@ scripts/                        End-to-end pipeline scripts
   train_warehouse_detector.py   Fine-tune YOLOv8 segmentation model
   plot_loss_curves.py           Plot training vs validation losses from results.csv
   evaluate_footprint.py         Footprint-anchored precision/recall over the val set
+  visualize_val_predictions.py  Render ground truth vs predicted warehouse outlines on val patches
 src/warehouse_growth/           Python package
   cli.py                        Command-line entry points
   config.py                     Config loading and validation
